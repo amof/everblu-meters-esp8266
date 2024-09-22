@@ -40,7 +40,7 @@ public:
    * @param rxBuffer 
    * @return uint32_t 
    */
-  uint32_t readFifoData(int timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer);
+  uint32_t readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer);
   /**
    * @brief Print all the registers from CC1101
    * 
@@ -59,7 +59,7 @@ public:
    * @return true 
    * @return false 
    */
-  bool waitForGdo0Change(uint8_t voltageLevel, int timeoutMs);
+  bool waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs);
   /**
    * @brief Wait the chip status to be in the desired state
    * 

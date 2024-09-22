@@ -1,3 +1,7 @@
+/*  the radian_trx SW shall not be distributed  nor used for commercial product*/
+/*  it is exposed just to demonstrate CC1101 capability to reader water meter indexes */
+/*  there is no Warranty on radian_trx SW */
+
 #include <arduino.h>
 
 #include <SPI.h>
@@ -15,31 +19,18 @@ CC1101::CC1101(uint8_t gd0_pin)
   _gdo_pin = gd0_pin;
 }
 
-void CC1101::reset(void) // reset defined in cc1100 datasheet §19.1
-{
-  writeCmd(SRES);	//GDO0 pin should output a clock signal with a frequency of CLK_XOSC/192.
-  //periode 1/7.417us= 134.8254k  * 192 --> 25.886477M
-  //10 periode 73.83 = 135.4463k *192 --> 26Mhz
-  delay(1); //1ms for getting chip to reset properly
-
-  writeCmd(SFTX);   //flush the TX_fifo content -> a must for interrupt handling
-  writeCmd(SFRX);	  //flush the RX_fifo content -> a must for interrupt handling	
-  
-  delay(1); //1ms
-}
-
 void CC1101::init(void)
 {
   pinMode(_gdo_pin, INPUT_PULLUP);
 
   spiConfigure(0, SPI_SPEED);
+  reset();
 
   version();
 }
 
 void CC1101::setFrequency(float freq)
 {
-  reset();
   configureRF_0(freq);
   //calibrateAndCompensate();
 }
@@ -95,19 +86,25 @@ void CC1101::version(void)
   delay(1);
 }
 
-bool CC1101::waitForGdo0Change(uint8_t voltageLevel, int timeoutMs) {
-    int elapsedTime = 0;
-    while ((digitalRead(_gdo_pin) == voltageLevel) && (elapsedTime < timeoutMs)) {
+bool CC1101::waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs) {
+    uint32_t elapsedTime = 0;
+    bool gdo0_has_changed = false;
+
+    // While not reading the expected voltage
+    while ((digitalRead(_gdo_pin) != voltageLevel) && (elapsedTime < timeoutMs)) {
         delay(1);
         elapsedTime++;
     }
 
-    if (elapsedTime < timeoutMs) {
-        Serial.printf("[CC1101] Sync pattern [%u] detected\n", voltageLevel);
-        return true;
-    } else {
-        return false;
+    if (elapsedTime >= timeoutMs) {
+      Serial.printf("[CC1101] TMO GDO [%u] after %ums\n", voltageLevel, timeoutMs);
     }
+    else{
+        //Serial.printf("[CC1101] GDO [%u] detected\n", voltageLevel);
+        gdo0_has_changed = true;
+    }
+
+    return gdo0_has_changed;
 }
 
 bool CC1101::waitForState(ChipStatusState state)
@@ -117,13 +114,13 @@ bool CC1101::waitForState(ChipStatusState state)
     do
     {
         halRfReadReg(MARCSTATE_ADDR);
-        delay(2);
-        timeout +=2;
+        delay(1);
+        timeout +=1;
     } while ((status_state != state) && (timeout < STATE_CHG_TMO));
 
     if(timeout >= STATE_CHG_TMO)
     {
-        Serial.printf("[CC1101] Actual state %u != %u\n", (uint8_t)status_state, (uint8_t)state);
+        Serial.printf("[CC1101] TMO: Actual state %u != %u\n", (uint8_t)status_state, (uint8_t)state);
         isInWantedState = false;
     }
 
@@ -137,26 +134,26 @@ void CC1101::getRxStats()
     rssiDbm = rssiTo2dbm(halRfReadReg(RSSI_ADDR));
 
     Serial.println("[CC1101] Rx statistics:");
-    Serial.printf("RSSI=%u\n", rssiDbm);
-    Serial.printf("LQI=%u\n", lqi);
-    Serial.printf("Freq Est=%u\n", freqEst);
+    Serial.printf("\tRSSI=%u\n", rssiDbm);
+    Serial.printf("\tLQI=%u\n", lqi);
+    Serial.printf("\tFreq Est=%u\n", freqEst);
 }
 
-uint32_t CC1101::readFifoData(int timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer) {
+uint32_t CC1101::readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer) {
     uint32_t totalBytesReceived = 0;
-    uint8_t bytesInRx = 1;
-    int elapsedTime = 0;
+    uint8_t bytesInRx = 0;
+    uint32_t elapsedTime = 0;
 
     while ((totalBytesReceived < totalSizeBytes) && (elapsedTime < timeoutMs)) {
         delay(5);
         elapsedTime += 5;
         bytesInRx = halRfReadReg(RXBYTES_ADDR) & RXBYTES_MASK;
-        if (bytesInRx) {
+        if (bytesInRx > 0) {
             readBurstReg(RX_FIFO_ADDR, &rxBuffer[totalBytesReceived], bytesInRx);
             totalBytesReceived += bytesInRx;
         }
     }
-
+    Serial.printf("[CC1101] Bytes received in FIFO: %u (expected: %u)\n", totalBytesReceived, totalSizeBytes);
     return totalBytesReceived;
 }
 
@@ -247,6 +244,25 @@ int8_t CC1101::rssiTo2dbm(uint8_t rssi_dec)
 /**********
  * INTERNAL
  */
+void CC1101::reset(void) 
+{
+  // Reset defined in cc1100 datasheet §19.1
+  digitalWrite(PIN_SPI_SS, LOW);
+  delay(1);
+  digitalWrite(PIN_SPI_SS, HIGH);
+  delay(1);
+  digitalWrite(PIN_SPI_SS, LOW);
+  while(digitalRead(PIN_SPI_MISO));
+  writeCmd(SRES);
+  while(digitalRead(PIN_SPI_MISO));
+  digitalWrite(PIN_SPI_SS, HIGH);
+
+  // Flush buffers
+  writeCmd(SFTX);   //flush the TX_fifo content
+  writeCmd(SFRX);	  //flush the RX_fifo content
+  
+  delay(1); //1ms
+}
 
 void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
 {
