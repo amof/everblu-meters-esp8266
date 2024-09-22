@@ -76,12 +76,12 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
             ++outputBitIndex;
         }
 
-        // Retrieve current bit from the input buffer
+        // Retrieve current bit from the input buffer, without reversing bit order prematurely
         uint32_t byteIndex = inputBitIndex / bitsPerByte;
         uint32_t bitInByte = inputBitIndex % bitsPerByte;
-        uint8_t currentBit = (inputBuffer[byteIndex] >> (7 - bitInByte)) & 1;
+        uint8_t currentBit = (inputBuffer[byteIndex] >> bitInByte) & 1; // No reversal yet
 
-        // Write the current bit to the output buffer with reversed bit order
+        // Write the current bit to the output buffer with the correct bit position reversal
         uint32_t outputBytePos = outputBitIndex / bitsPerByte;
         uint32_t outputBitPos = 7 - (outputBitIndex % bitsPerByte);
 
