@@ -44,14 +44,13 @@ bool cbtime_set = false;
 
 void onUpdateData()
 {
-  cyble.getDataFromMeter();
-
   time_t tnow = time(nullptr);
   struct tm *ptm = gmtime(&tnow);
   Serial.printf("Current date (UTC) : %04d/%02d/%02d %02d:%02d:%02d - %s\n", ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, ptm->tm_sec, String(tnow, DEC).c_str());
 
   char iso8601[128];
   strftime(iso8601, sizeof iso8601, "%FT%TZ", gmtime(&tnow));
+  //cyble.getDataFromMeter();
 
   if (cyble.num_of_readings == 0 || cyble.current_index == 0) {
     Serial.println("Unable to retrieve data from meter. Retry later...");
@@ -89,7 +88,9 @@ void onConnectionEstablished()
   mqtt.publish(counterConfigTopic, numReadingsConfigPayload, true);
   delay(50); // Do not remove
 
-  cyble.init();
+  onUpdateData();
+
+  cyble.lookForMeter();
 }
 
 void setup()
@@ -104,7 +105,7 @@ void setup()
   #ifdef DEBUG_MQTT
     mqtt.enableDebuggingMessages(true);
   #endif
-
+  cyble.init();
 }
 
 void loop()
