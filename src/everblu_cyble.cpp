@@ -24,6 +24,7 @@ const static float FREQ_INC = 0.0005f;
 #define EEPROM_SIZE 16      // EEPROM size
 #define EEPROM_FREQ_ADDR 0  // Address where the float is stored
 
+const static uint8_t WAKE_UP_COUNT = 77; // 77 * (8*8) =  4928 bits
 #define WATER_METER_ACK_LEN         0x12
 #define WATER_METER_RESPONSE_LEN    0x7C
 #define RADIAN_FRAME_SIZE(expectedSizeBytes) (((expectedSizeBytes) * (8 + 3) / 8) + 1)
@@ -40,22 +41,13 @@ void EverbluCyble::init()
 {
     _cc1101->init();
     EEPROM.begin(EEPROM_SIZE);
-
-    // Retrieve the frequency of counter from memory and test it
-    // If nothing found or can't find it, scan again
-    float frequency = 0;
-    EEPROM.get(EEPROM_FREQ_ADDR, frequency);
-    if(frequency < FREQ_MIN || frequency > FREQ_MAX)
-        lookForMeter();
-    else
-        _cc1101->setFrequency(frequency);
 }
 
 void EverbluCyble::lookForMeter()
 {
     Serial.println("[Everblu] Looking for meter");
     for (float freq = FREQ_MIN; freq <= FREQ_MAX; freq += FREQ_INC) {
-        Serial.printf("[Everblu] --> Testing frequency : %f\n", freq);
+        Serial.printf("\n[Everblu] --> Testing frequency : %f\n", freq);
         
         _cc1101->setFrequency(freq);
         getDataFromMeter();
@@ -119,27 +111,25 @@ bool EverbluCyble::askWaterMeter()
     _cc1101->halRfWriteReg(PKTCTRL0, 0x02);             // infinite packet len
     
     // Go INTO Tx
-    Serial.println("[Everblu] Going into TX mode");
+    //Serial.println("[Everblu] Going into TX mode");
     _cc1101->writeCmd(STX);	                            // sends the data store into transmit buffer over the air
-    delay(5);                                          // Give a bit of time for calibration
+    delay(4);                                           // Give a bit of time for calibration
     // If not in correct state, return
     if(_cc1101->waitForState(_cc1101->CHIP_SS_TX) == false)
         return false;
 
     // Await meter to wake up
-    Serial.println("[Everblu] Sending preamble");
+    //Serial.println("[Everblu] Sending preamble");
     longWakeupPreamble();
 
-    // Wait 130ms
-    delay(130);
-
     // Send Radian master request
-    Serial.println("[Everblu] Write radian master request");
+    //Serial.println("[Everblu] Write radian master request");
     createRadianMasterRequest(txBuffer);
     _cc1101->writeBurstReg(TX_FIFO_ADDR, txBuffer, TX_BUFFER_SIZE);
+    delay(130); // 39 bytes * 8 /2.4 = 130ms
 
     // Flush the Tx FIFO content and restore default registers
-    Serial.println("[Everblu] Flushing FIFO & restoring modem configuration");
+    //Serial.println("[Everblu] Flushing FIFO & restoring modem configuration");
     _cc1101->writeCmd(SFTX);
     _cc1101->halRfWriteReg(MDMCFG2, 0x02);      // Restore modem configuration
     _cc1101->halRfWriteReg(PKTCTRL0, 0x00);     // Fix packet length
@@ -161,7 +151,7 @@ bool EverbluCyble::wait_meter_ack()
         return false;
     }
 
-    if(receiveData(RX_TMO, 0, rxBuffer) == 0)
+    if(receiveData(RX_TMO, WATER_METER_ACK_LEN, rxBuffer) == 0)
         isAck = false;
 
     // Free memory
@@ -218,46 +208,43 @@ bool EverbluCyble::wait_meter_response()
 
 uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t radianFrameSizeBytes, uint8_t *rxBuffer)
 {
-    Serial.println("[Everblu] Configure for sync pattern");
+    //Serial.println("[Everblu] Configure for sync pattern");
     initializeForSyncPatternReception();
 
-    Serial.println("[Everblu] Going into RX mode");
+    //Serial.println("[Everblu] Go into RX mode");
     _cc1101->writeCmd(SIDLE);  // sets to idle first. must be in
     _cc1101->writeCmd(SRX);    // writes receive strobe (receive mode)
-    // If not in correct state, return
     if(_cc1101->waitForState(_cc1101->CHIP_SS_RX) == false)
-        return 0;
+        return 0;     // If not in correct state, return
 
-    Serial.println("[Everblu] Wait for GDO0 change LOW");
-    if (!_cc1101->waitForGdo0Change(LOW,timeoutMs)) 
+
+    //Serial.println("[Everblu] Wait for GDO0 change HIGH");
+    if (!_cc1101->waitForGdo0Change(HIGH, timeoutMs)) 
         return 0;
 
     if(_cc1101->readFifoData(timeoutMs, 1, rxBuffer)==0)
         return 0;
-    Serial.println("[Everblu] First sync received");
+    //Serial.println("[Everblu] Sync pattern has been detected");
 
-    _cc1101->getRxStats();
-
-    Serial.println("[Everblu] Configure for data reception");
+    //Serial.println("[Everblu] Configure for data reception");
     initializeForDataReception();
 
-    Serial.println("[Everblu] Going into RX mode");
+    //Serial.println("[Everblu] Go into RX mode");
     _cc1101->writeCmd(SIDLE);  // sets to idle first. must be in
     _cc1101->writeCmd(SRX);    // writes receive strobe (receive mode)
-    // If not in correct state, return
     if(_cc1101->waitForState(_cc1101->CHIP_SS_RX) == false)
-        return 0;
+        return 0;     // If not in correct state, return
 
-    Serial.println("[Everblu] Wait for GDO0 change HIGH");
-    if (!_cc1101->waitForGdo0Change(HIGH,timeoutMs)) 
+    //Serial.println("[Everblu] Wait for GDO0 change LOW");
+    if (!_cc1101->waitForGdo0Change(LOW,timeoutMs)) 
         return 0;
 
     uint32_t totalBytesReceived = _cc1101->readFifoData(timeoutMs, radianFrameSizeBytes * 4, rxBuffer);
-    if (totalBytesReceived == 0) 
-        return 0;
 
-    Serial.printf("[Everblu] Data received (%u bytes)", totalBytesReceived);
+    // Get statistics
+    _cc1101->getRxStats();
 
+    //Serial.println("[Everblu] Restore default settings");
     restoreDefaultSettings();
 
     return totalBytesReceived;
@@ -274,7 +261,7 @@ void EverbluCyble::resetData()
 
 void EverbluCyble::longWakeupPreamble()
 {
-    uint8_t wakeUpCount = 77; // 77 * (8*8) =  4928 bits
+    uint8_t wakeUpCount = WAKE_UP_COUNT;
     uint16_t timeout = 0;
     uint8_t wakeUpBuffer[WUPBUFFER_SIZE] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
 
@@ -284,8 +271,8 @@ void EverbluCyble::longWakeupPreamble()
     {
         _cc1101->writeBurstReg(TX_FIFO_ADDR, wakeUpBuffer, 8); 
         wakeUpCount--;
-        delay(20); // Wait before sending more data
-        timeout += 2;
+        delay(30); // Wait before sending more data : 8*8/2.4k=26.6ms
+        timeout += 3;
     }
 }
 
@@ -299,14 +286,12 @@ void EverbluCyble::createRadianMasterRequest(uint8_t *outputBuffer)
     to_encode[5] = (uint8_t)((_serial&0x00FF0000)>>16);
     to_encode[6] = (uint8_t)((_serial&0x0000FF00)>>8);
     to_encode[7] = (uint8_t) (_serial&0x000000FF);
-    Serial.println("[Everblu] calculating CRC");
+    //Serial.println("[Everblu] calculating CRC");
     crc = crc_kermit(to_encode,sizeof(to_encode)-2);
-
     to_encode[sizeof(to_encode)-2]=(uint8_t)((crc&0xFF00)>>8);
     to_encode[sizeof(to_encode)-1]=(uint8_t)(crc&0x00FF);
-
     memcpy(outputBuffer,synch_pattern,sizeof(synch_pattern));
-    Serial.println("[Everblu] Encoding");
+    //Serial.println("[Everblu] Encoding");
     encode2serial_1_3(to_encode,sizeof(to_encode),&outputBuffer[sizeof(synch_pattern)]);
 }
 
@@ -341,8 +326,8 @@ void EverbluCyble::initializeForDataReception() {
 }
 
 void EverbluCyble::restoreDefaultSettings() {
-    _cc1101->writeCmd(SFRX);
-    _cc1101->writeCmd(SIDLE);
+    _cc1101->writeCmd(SFRX);                // Flush RX FIFO
+    _cc1101->writeCmd(SIDLE);               // Idle
     _cc1101->halRfWriteReg(MDMCFG4, 0xF6);  // Restore RX filter BW
     _cc1101->halRfWriteReg(MDMCFG3, 0x83);  // Restore data rate
     _cc1101->halRfWriteReg(PKTCTRL0, 0x00); // Fixed packet length
