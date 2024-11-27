@@ -184,3 +184,25 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
 
     return dest_byte_cnt;
 }
+
+void show_in_hex_array(uint8_t *buffer, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++)
+    {
+        if (i > 0 && i % 16 == 0)
+        {
+            Serial.println(); // New line after every 16 bytes
+        }
+        Serial.printf("0x%02X, ", buffer[i]);
+    }
+    Serial.println(); // Final newline
+}
+
+void show_in_hex_one_line(uint8_t *buffer, size_t len)
+{
+    int i = 0;
+    for (i = 0; i < len; i++)
+    {
+        Serial.printf("%02X ", buffer[i]);
+    }
+}
