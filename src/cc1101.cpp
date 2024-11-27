@@ -64,8 +64,7 @@ void CC1101::printRegistersSettings(void)
     {
       Serial.println(); // Print a new line every 16 values
     }
-    Serial.print(config_reg_verify[i], HEX);
-    Serial.print(" ");
+    Serial.printf("%02X ", config_reg_verify[i]);
   }
   Serial.println(); // End the line after printing all register values
 
@@ -95,13 +94,13 @@ void CC1101::version(void)
   delay(1);
 }
 
-bool CC1101::waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs)
+bool CC1101::waitForGdo0Change(uint32_t timeoutMs)
 {
   uint32_t elapsedTime = 0;
   bool gdo0_has_changed = false;
 
-  // While not reading the expected voltage
-  while ((digitalRead(_gdo_pin) != voltageLevel) && (elapsedTime < timeoutMs))
+  // While not dropping GDO pin
+  while ((digitalRead(_gdo_pin) == HIGH) && (elapsedTime < timeoutMs))
   {
     delay(1);
     elapsedTime++;
@@ -109,11 +108,11 @@ bool CC1101::waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs)
 
   if (elapsedTime >= timeoutMs)
   {
-    Serial.printf("[CC1101] TMO GDO [%u] after %ums\n", voltageLevel, timeoutMs);
+    Serial.printf("[CC1101] TMO GDO after %ums\n", timeoutMs);
   }
   else
   {
-    // Serial.printf("[CC1101] GDO [%u] detected\n", voltageLevel);
+    // Serial.printf("[CC1101] GDO detected\n");
     gdo0_has_changed = true;
   }
 

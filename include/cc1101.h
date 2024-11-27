@@ -55,12 +55,11 @@ public:
   /**
    * @brief Wait for GDO0 to change
    *
-   * @param voltageLevel
    * @param timeoutMs
    * @return true
    * @return false
    */
-  bool waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs);
+  bool waitForGdo0Change(uint32_t timeoutMs);
   /**
    * @brief Wait the chip status to be in the desired state
    *
