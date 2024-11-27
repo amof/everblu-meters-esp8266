@@ -49,7 +49,6 @@ void EverbluCyble::lookForMeter()
     for (float freq = FREQ_MIN; freq <= FREQ_MAX; freq += FREQ_INC)
     {
         Serial.printf("\n[Everblu] --> Testing frequency : %f\n", freq);
-
         _cc1101->setFrequency(freq);
         getDataFromMeter();
 
@@ -82,6 +81,11 @@ void EverbluCyble::getDataFromMeter()
     // Reset internal variables
     resetData();
 
+    // Put CC1101 into IDLE and flush TX/RX FIFO
+    _cc1101->writeCmd(SIDLE);
+    _cc1101->writeCmd(SFTX); // flush the TX_fifo content
+    _cc1101->writeCmd(SFRX); // flush the RX_fifo content
+
     // Request data from meter
     Serial.println("[Everblu] Wake-up meter and request data");
     if (askWaterMeter() == false)
@@ -108,6 +112,7 @@ bool EverbluCyble::askWaterMeter()
     // Configure RF
     _cc1101->halRfWriteReg(MDMCFG2, 0x00);  // clear MDMCFG2 to do not send preamble and sync
     _cc1101->halRfWriteReg(PKTCTRL0, 0x02); // infinite packet len
+    _cc1101->halRfWriteReg(PKTLEN, 0xFF);   // infinite packet len
 
     // Go INTO Tx
     // Serial.println("[Everblu] Going into TX mode");
@@ -234,7 +239,7 @@ uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t radianFrameSizeB
         return 0; // If not in correct state, return
 
     // Serial.println("[Everblu] Wait for GDO0 change LOW");
-    if (!_cc1101->waitForGdo0Change(LOW, timeoutMs))
+    if (!_cc1101->waitForGdo0Change(timeoutMs))
         return 0;
 
     uint32_t totalBytesReceived = _cc1101->readFifoData(timeoutMs, radianFrameSizeBytes * 4, rxBuffer);
