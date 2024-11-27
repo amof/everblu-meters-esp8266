@@ -36,5 +36,4 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
  */
 uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer);
 
-
 #endif // __UTILS_H__

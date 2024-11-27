@@ -11,11 +11,11 @@ public:
     void init();
     void lookForMeter();
     void getDataFromMeter();
-    uint32_t current_index;     // Current meter index in liter
-    uint8_t num_of_readings;    // Number of time meter has been read
-    uint8_t battery_lifetime;   // Remaining battery life in months
-    uint8_t wakeup_start;       // Meter wakeup time
-    uint8_t wakeup_stop;        // Meter sleep time
+    uint32_t current_index;   // Current meter index in liter
+    uint8_t num_of_readings;  // Number of time meter has been read
+    uint8_t battery_lifetime; // Remaining battery life in months
+    uint8_t wakeup_start;     // Meter wakeup time
+    uint8_t wakeup_stop;      // Meter sleep time
 private:
     uint8_t _year;
     uint32_t _serial;

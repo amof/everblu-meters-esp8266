@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#define CRC_START_KERMIT    0x0000
+#define CRC_START_KERMIT 0x0000
 
 // Precomputed CRC Kermit lookup table
 static const uint16_t crc_table[256] = {
@@ -22,16 +22,17 @@ static const uint16_t crc_table[256] = {
     0xC60C, 0xD785, 0xE51E, 0xF497, 0x8028, 0x91A1, 0xA33A, 0xB2B3, 0x4A44, 0x5BCD, 0x6956, 0x78DF, 0x0C60, 0x1DE9, 0x2F72, 0x3EFB,
     0xD68D, 0xC704, 0xF59F, 0xE416, 0x90A9, 0x8120, 0xB3BB, 0xA232, 0x5AC5, 0x4B4C, 0x79D7, 0x685E, 0x1CE1, 0x0D68, 0x3FF3, 0x2E7A,
     0xE70E, 0xF687, 0xC41C, 0xD595, 0xA12A, 0xB0A3, 0x8238, 0x93B1, 0x6B46, 0x7ACF, 0x4854, 0x59DD, 0x2D62, 0x3CEB, 0x0E70, 0x1FF9,
-    0xF78F, 0xE606, 0xD49D, 0xC514, 0xB1AB, 0xA022, 0x92B9, 0x8330, 0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78
-};
+    0xF78F, 0xE606, 0xD49D, 0xC514, 0xB1AB, 0xA022, 0x92B9, 0x8330, 0x7BC7, 0x6A4E, 0x58D5, 0x495C, 0x3DE3, 0x2C6A, 0x1EF1, 0x0F78};
 
 // Function to calculate the CRC using the precomputed table
-uint16_t crc_kermit(const unsigned char *input_ptr, size_t num_bytes) {
+uint16_t crc_kermit(const unsigned char *input_ptr, size_t num_bytes)
+{
     uint16_t crc = CRC_START_KERMIT;
     size_t a;
 
-    for (a = 0; a < num_bytes; a++) {
-        uint8_t short_c = 0x00ff & (uint16_t) *input_ptr;
+    for (a = 0; a < num_bytes; a++)
+    {
+        uint8_t short_c = 0x00ff & (uint16_t)*input_ptr;
         crc = (crc >> 8) ^ crc_table[(crc ^ short_c) & 0xff];
         input_ptr++;
     }
@@ -49,7 +50,7 @@ uint16_t crc_kermit(const unsigned char *input_ptr, size_t num_bytes) {
  * @param outputBuffer Points to the encoded data.
  * @return Number of bytes written to outputBuffer.
  */
-uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_t *outputBuffer) 
+uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_t *outputBuffer)
 {
     uint32_t inputBitIndex = 0;  // Index to traverse input buffer bit by bit
     uint32_t outputBitIndex = 0; // Index to traverse output buffer bit by bit
@@ -59,13 +60,17 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
     memset(outputBuffer, 0, (inputBufferLen * 13 / 8) + 2); // Ensures sufficient space for encoded data
 
     // Process each bit in the input buffer
-    for (inputBitIndex = 0; inputBitIndex < (inputBufferLen * bitsPerByte); ++inputBitIndex) {
+    for (inputBitIndex = 0; inputBitIndex < (inputBufferLen * bitsPerByte); ++inputBitIndex)
+    {
 
         // Every 8 input bits, insert stop bits (3 stop bits) and a start bit
-        if (inputBitIndex % bitsPerByte == 0) {
-            if (inputBitIndex > 0) {
+        if (inputBitIndex % bitsPerByte == 0)
+        {
+            if (inputBitIndex > 0)
+            {
                 // Insert 3 stop bits (1)
-                for (uint8_t i = 0; i < 3; ++i) {
+                for (uint8_t i = 0; i < 3; ++i)
+                {
                     outputBuffer[outputBitIndex / bitsPerByte] |= 1 << (7 - (outputBitIndex % bitsPerByte));
                     ++outputBitIndex;
                 }
@@ -85,9 +90,12 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
         uint32_t outputBytePos = outputBitIndex / bitsPerByte;
         uint32_t outputBitPos = 7 - (outputBitIndex % bitsPerByte);
 
-        if (currentBit) {
+        if (currentBit)
+        {
             outputBuffer[outputBytePos] |= 1 << outputBitPos;
-        } else {
+        }
+        else
+        {
             outputBuffer[outputBytePos] &= ~(1 << outputBitPos);
         }
 
@@ -95,7 +103,8 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
     }
 
     // Insert additional stop bits (if any remaining bits in the last byte)
-    while (outputBitIndex % bitsPerByte != 0) {
+    while (outputBitIndex % bitsPerByte != 0)
+    {
         uint32_t outputBytePos = outputBitIndex / bitsPerByte;
         uint32_t outputBitPos = 7 - (outputBitIndex % bitsPerByte);
         outputBuffer[outputBytePos] |= 1 << outputBitPos;
@@ -109,7 +118,7 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
     return (outputBitIndex / bitsPerByte) + 2;
 }
 
-uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer) 
+uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer)
 {
     uint8_t bit_pol = 0;
     uint8_t dest_bit_cnt = 0;
@@ -121,32 +130,44 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
     // Initialize bit polarity with the first byte's MSB
     bit_pol = (rxBuffer[0] & 0x80);
 
-    for (int i = 0; i < l_total_byte; ++i) {
+    for (int i = 0; i < l_total_byte; ++i)
+    {
         current_Rx_Byte = rxBuffer[i];
 
-        for (int j = 0; j < 8; ++j) {
-            if ((current_Rx_Byte & 0x80) == bit_pol) {
+        for (int j = 0; j < 8; ++j)
+        {
+            if ((current_Rx_Byte & 0x80) == bit_pol)
+            {
                 bit_cnt++;
-            } else {
-                if (bit_cnt == 1) {
+            }
+            else
+            {
+                if (bit_cnt == 1)
+                {
                     bit_pol = (current_Rx_Byte & 0x80);
                     bit_cnt = bit_cnt_flush + 1;
-                } else {
+                }
+                else
+                {
                     bit_cnt_flush = bit_cnt;
                     bit_cnt = (bit_cnt + 2) / 4;
                     bit_cnt_flush = bit_cnt_flush - (bit_cnt * 4);
 
-                    for (int k = 0; k < bit_cnt; ++k) {
-                        if (dest_bit_cnt < 8) {
+                    for (int k = 0; k < bit_cnt; ++k)
+                    {
+                        if (dest_bit_cnt < 8)
+                        {
                             decoded_buffer[dest_byte_cnt] = (decoded_buffer[dest_byte_cnt] >> 1) | bit_pol;
                         }
 
                         dest_bit_cnt++;
 
-                        if (dest_bit_cnt == 10 && !bit_pol) {
+                        if (dest_bit_cnt == 10 && !bit_pol)
+                        {
                             return dest_byte_cnt;
                         }
-                        if (dest_bit_cnt >= 11 && !bit_pol) {
+                        if (dest_bit_cnt >= 11 && !bit_pol)
+                        {
                             dest_bit_cnt = 0;
                             dest_byte_cnt++;
                         }

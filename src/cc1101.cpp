@@ -8,11 +8,19 @@
 #include "cc1101.h"
 #include "cc1101_registers.h"
 
-
-uint8_t PA[] = { 0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00, };
+uint8_t PA[] = {
+    0x60,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+};
 
 #define SPI_SPEED 500000UL
-#define STATE_CHG_TMO 25    // State change timeout
+#define STATE_CHG_TMO 25 // State change timeout
 
 CC1101::CC1101(uint8_t gd0_pin)
 {
@@ -32,7 +40,7 @@ void CC1101::init(void)
 void CC1101::setFrequency(float freq)
 {
   configureRF_0(freq);
-  //calibrateAndCompensate();
+  // calibrateAndCompensate();
 }
 
 void CC1101::printRegistersSettings(void)
@@ -43,32 +51,33 @@ void CC1101::printRegistersSettings(void)
   memset(config_reg_verify, 0, CFG_REGISTER);
   memset(Patable_verify, 0, 8);
 
-  readBurstReg(0, config_reg_verify, CFG_REGISTER);  // reads all config registers from cc1100
-  readBurstReg(PATABLE_ADDR, Patable_verify, 8);      // reads output power settings from cc1100
+  readBurstReg(0, config_reg_verify, CFG_REGISTER); // reads all config registers from cc1100
+  readBurstReg(PATABLE_ADDR, Patable_verify, 8);    // reads output power settings from cc1100
 
   // Print the header for config registers
   Serial.println("Config Register in hex:");
   Serial.println(" 0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
 
-  for (i = 0; i < CFG_REGISTER; i++)  // Print each register value
+  for (i = 0; i < CFG_REGISTER; i++) // Print each register value
   {
-    if (i % 16 == 0 && i != 0) {
-      Serial.println();  // Print a new line every 16 values
+    if (i % 16 == 0 && i != 0)
+    {
+      Serial.println(); // Print a new line every 16 values
     }
     Serial.print(config_reg_verify[i], HEX);
     Serial.print(" ");
   }
-  Serial.println();  // End the line after printing all register values
+  Serial.println(); // End the line after printing all register values
 
   // Print the PaTable header
   Serial.println("PaTable:");
 
-  for (i = 0; i < 8; i++)  // Print each PaTable value
+  for (i = 0; i < 8; i++) // Print each PaTable value
   {
     Serial.print(Patable_verify[i], HEX);
     Serial.print(" ");
   }
-  Serial.println();  // End the line after printing all PaTable values
+  Serial.println(); // End the line after printing all PaTable values
   delay(1);
 }
 
@@ -82,79 +91,86 @@ void CC1101::version(void)
   Serial.print("[CC1101] Partnumber: 0x");
   Serial.println(partNumber, HEX);
   Serial.print("[CC1101] Version: 0x");
-  Serial.println(version, HEX); 
+  Serial.println(version, HEX);
   delay(1);
 }
 
-bool CC1101::waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs) {
-    uint32_t elapsedTime = 0;
-    bool gdo0_has_changed = false;
+bool CC1101::waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs)
+{
+  uint32_t elapsedTime = 0;
+  bool gdo0_has_changed = false;
 
-    // While not reading the expected voltage
-    while ((digitalRead(_gdo_pin) != voltageLevel) && (elapsedTime < timeoutMs)) {
-        delay(1);
-        elapsedTime++;
-    }
+  // While not reading the expected voltage
+  while ((digitalRead(_gdo_pin) != voltageLevel) && (elapsedTime < timeoutMs))
+  {
+    delay(1);
+    elapsedTime++;
+  }
 
-    if (elapsedTime >= timeoutMs) {
-      Serial.printf("[CC1101] TMO GDO [%u] after %ums\n", voltageLevel, timeoutMs);
-    }
-    else{
-        //Serial.printf("[CC1101] GDO [%u] detected\n", voltageLevel);
-        gdo0_has_changed = true;
-    }
+  if (elapsedTime >= timeoutMs)
+  {
+    Serial.printf("[CC1101] TMO GDO [%u] after %ums\n", voltageLevel, timeoutMs);
+  }
+  else
+  {
+    // Serial.printf("[CC1101] GDO [%u] detected\n", voltageLevel);
+    gdo0_has_changed = true;
+  }
 
-    return gdo0_has_changed;
+  return gdo0_has_changed;
 }
 
 bool CC1101::waitForState(ChipStatusState state)
 {
-    uint16_t timeout = 0;
-    bool isInWantedState = true;
-    do
-    {
-        halRfReadReg(MARCSTATE_ADDR);
-        delay(1);
-        timeout +=1;
-    } while ((status_state != state) && (timeout < STATE_CHG_TMO));
+  uint16_t timeout = 0;
+  bool isInWantedState = true;
+  do
+  {
+    halRfReadReg(MARCSTATE_ADDR);
+    delay(1);
+    timeout += 1;
+  } while ((status_state != state) && (timeout < STATE_CHG_TMO));
 
-    if(timeout >= STATE_CHG_TMO)
-    {
-        Serial.printf("[CC1101] TMO: Actual state %u != %u\n", (uint8_t)status_state, (uint8_t)state);
-        isInWantedState = false;
-    }
+  if (timeout >= STATE_CHG_TMO)
+  {
+    Serial.printf("[CC1101] TMO: Actual state %u != %u\n", (uint8_t)status_state, (uint8_t)state);
+    isInWantedState = false;
+  }
 
-    return isInWantedState;
+  return isInWantedState;
 }
 
 void CC1101::getRxStats()
 {
-    lqi = halRfReadReg(LQI_ADDR);
-    freqEst = halRfReadReg(FREQEST_ADDR);
-    rssiDbm = rssiTo2dbm(halRfReadReg(RSSI_ADDR));
+  lqi = halRfReadReg(LQI_ADDR);
+  freqEst = halRfReadReg(FREQEST_ADDR);
+  rssiDbm = rssiTo2dbm(halRfReadReg(RSSI_ADDR));
 
-    Serial.println("[CC1101] Rx statistics:");
-    Serial.printf("\tRSSI=%u\n", rssiDbm);
-    Serial.printf("\tLQI=%u\n", lqi);
-    Serial.printf("\tFreq Est=%u\n", freqEst);
+  Serial.println("[CC1101] Rx statistics:");
+  Serial.printf("\tRSSI=%u\n", rssiDbm);
+  Serial.printf("\tLQI=%u\n", lqi);
+  Serial.printf("\tFreq Est=%u\n", freqEst);
 }
 
-uint32_t CC1101::readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer) {
-    uint32_t totalBytesReceived = 0;
-    uint8_t bytesInRx = 0;
-    uint32_t elapsedTime = 0;
+uint32_t CC1101::readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer)
+{
+  uint32_t totalBytesReceived = 0;
+  uint8_t bytesInRx = 0;
+  uint32_t elapsedTime = 0;
 
-    while ((totalBytesReceived < totalSizeBytes) && (elapsedTime < timeoutMs)) {
-        delay(5);
-        elapsedTime += 5;
-        bytesInRx = halRfReadReg(RXBYTES_ADDR) & RXBYTES_MASK;
-        if (bytesInRx > 0) {
-            readBurstReg(RX_FIFO_ADDR, &rxBuffer[totalBytesReceived], bytesInRx);
-            totalBytesReceived += bytesInRx;
-        }
+  while ((totalBytesReceived < totalSizeBytes) && (elapsedTime < timeoutMs))
+  {
+    delay(5);
+    elapsedTime += 5;
+    bytesInRx = halRfReadReg(RXBYTES_ADDR) & RXBYTES_MASK;
+    if (bytesInRx > 0)
+    {
+      readBurstReg(RX_FIFO_ADDR, &rxBuffer[totalBytesReceived], bytesInRx);
+      totalBytesReceived += bytesInRx;
     }
-    Serial.printf("[CC1101] Bytes received in FIFO: %u (expected: %u)\n", totalBytesReceived, totalSizeBytes);
-    return totalBytesReceived;
+  }
+  Serial.printf("[CC1101] Bytes received in FIFO: %u (expected: %u)\n", totalBytesReceived, totalSizeBytes);
+  return totalBytesReceived;
 }
 
 /**********
@@ -163,7 +179,7 @@ uint32_t CC1101::readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8
 
 void CC1101::halRfWriteReg(uint8_t reg_addr, uint8_t value)
 {
-  uint8_t tbuf[2] = { 0 };
+  uint8_t tbuf[2] = {0};
   tbuf[0] = reg_addr | WRITE_SINGLE_BYTE;
   tbuf[1] = value;
   uint8_t len = 2;
@@ -175,7 +191,7 @@ void CC1101::halRfWriteReg(uint8_t reg_addr, uint8_t value)
 uint8_t CC1101::halRfReadReg(uint8_t spi_instr)
 {
   uint8_t value;
-  uint8_t rbuf[2] = { 0 };
+  uint8_t rbuf[2] = {0};
   uint8_t len = 2;
 
   rbuf[0] = spi_instr | READ_SINGLE_BYTE;
@@ -192,7 +208,7 @@ uint8_t CC1101::halRfReadReg(uint8_t spi_instr)
 
 void CC1101::writeCmd(uint8_t spi_instr)
 {
-  uint8_t tbuf[1] = { 0 };
+  uint8_t tbuf[1] = {0};
   tbuf[0] = spi_instr | WRITE_SINGLE_BYTE;
   spiTransfert(0, tbuf, 1);
   status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x0F);
@@ -232,7 +248,7 @@ int8_t CC1101::rssiTo2dbm(uint8_t rssi_dec)
   int8_t rssi_dbm;
   if (rssi_dec >= 128)
   {
-    rssi_dbm = ((rssi_dec - 256) / 2) - 74;			//rssi_offset via datasheet
+    rssi_dbm = ((rssi_dec - 256) / 2) - 74; // rssi_offset via datasheet
   }
   else
   {
@@ -244,7 +260,7 @@ int8_t CC1101::rssiTo2dbm(uint8_t rssi_dec)
 /**********
  * INTERNAL
  */
-void CC1101::reset(void) 
+void CC1101::reset(void)
 {
   // Reset defined in cc1100 datasheet §19.1
   digitalWrite(PIN_SPI_SS, LOW);
@@ -252,16 +268,18 @@ void CC1101::reset(void)
   digitalWrite(PIN_SPI_SS, HIGH);
   delay(1);
   digitalWrite(PIN_SPI_SS, LOW);
-  while(digitalRead(PIN_SPI_MISO));
+  while (digitalRead(PIN_SPI_MISO))
+    ;
   writeCmd(SRES);
-  while(digitalRead(PIN_SPI_MISO));
+  while (digitalRead(PIN_SPI_MISO))
+    ;
   digitalWrite(PIN_SPI_SS, HIGH);
 
   // Flush buffers
-  writeCmd(SFTX);   //flush the TX_fifo content
-  writeCmd(SFRX);	  //flush the RX_fifo content
-  
-  delay(1); //1ms
+  writeCmd(SFTX); // flush the TX_fifo content
+  writeCmd(SFRX); // flush the RX_fifo content
+
+  delay(1); // 1ms
 }
 
 void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
@@ -284,7 +302,7 @@ void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
     Serial.println("[CC1101] TMO in calibrateAndCompensate");
     return;
   }
-  
+
   // Configure Frequency Offset Compensation (FOC)
   // FOCCFG - Frequency Offset Compensation Configuration
   // Enable frequency offset compensation with settings for maximum performance
@@ -302,67 +320,79 @@ void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
 
 void CC1101::configureRF_0(float freq)
 {
-  halRfWriteReg(IOCFG2, 0x0D);    // GDO2 Output Pin Configuration : Serial Data Output
-  halRfWriteReg(IOCFG0, 0x06);    // GDO0 Output Pin Configuration : Asserts when sync word has been sent / received, and de-asserts at the end of the packet.
-  halRfWriteReg(FIFOTHR, 0x47);   // 0x4? adc with bandwith< 325khz
-  halRfWriteReg(SYNC1, 0x55);     // 01010101
-  halRfWriteReg(SYNC0, 0x00);     // 00000000 
- 
-  halRfWriteReg(PKTCTRL1, 0x00);  // Preamble quality estimator threshold=0   ; APPEND_STATUS=0; no addr check
-  halRfWriteReg(PKTCTRL0, 0x00);  // fix length , no CRC
-  halRfWriteReg(FSCTRL1, 0x08);   // Frequency Synthesizer Control
- 
-  writeFrequency(freq);           // Write frequency
- 
-  halRfWriteReg(MDMCFG4, 0xF6);   // Modem Configuration   RX filter BW = 58Khz
-  halRfWriteReg(MDMCFG3, 0x83);   // Modem Configuration   26M*((256+83h)*2^6)/2^28 = 2.4kbps 
-  halRfWriteReg(MDMCFG2, 0x02);   // Modem Configuration   2-FSK;  no Manchester ; 16/16 sync word bits detected
-  halRfWriteReg(MDMCFG1, 0x00);   // Modem Configuration num preamble 2=>0 , Channel spacing_exp
-  halRfWriteReg(MDMCFG0, 0x00);   // MDMCFG0 Channel spacing = 25Khz
-  halRfWriteReg(DEVIATN, 0x15);   // 5.157471khz 
-  halRfWriteReg(MCSM1, 0x00);     // CCA always ; default mode IDLE
-  halRfWriteReg(MCSM0, 0x18);     // Main Radio Control State Machine Configuration
-  halRfWriteReg(FOCCFG, 0x1D);    // Frequency Offset Compensation Configuration
-  halRfWriteReg(BSCFG, 0x1C);     // Bit Synchronization Configuration
-  halRfWriteReg(AGCCTRL2, 0xC7);  // AGC Control
-  halRfWriteReg(AGCCTRL1, 0x00);  // AGC Control
-  halRfWriteReg(AGCCTRL0, 0xB2);  // AGC Control
-  halRfWriteReg(WORCTRL, 0xFB);   // Wake On Radio Control
-  halRfWriteReg(FREND1, 0xB6);    // Front End RX Configuration
-  halRfWriteReg(FSCAL3, 0xE9);    // Frequency Synthesizer Calibration
-  halRfWriteReg(FSCAL2, 0x2A);    // Frequency Synthesizer Calibration
-  halRfWriteReg(FSCAL1, 0x00);    // Frequency Synthesizer Calibration
-  halRfWriteReg(FSCAL0, 0x1F);    // Frequency Synthesizer Calibration
-  halRfWriteReg(TEST2, 0x81);     // Various Test Settings link to adc retention
-  halRfWriteReg(TEST1, 0x35);     // Various Test Settings link to adc retention
-  halRfWriteReg(TEST0, 0x09);     // Various Test Settings link to adc retention
+  halRfWriteReg(IOCFG2, 0x0D);  // GDO2 Output Pin Configuration : Serial Data Output
+  halRfWriteReg(IOCFG0, 0x06);  // GDO0 Output Pin Configuration : Asserts when sync word has been sent / received, and de-asserts at the end of the packet.
+  halRfWriteReg(FIFOTHR, 0x47); // 0x4? adc with bandwith< 325khz
+  halRfWriteReg(SYNC1, 0x55);   // 01010101
+  halRfWriteReg(SYNC0, 0x00);   // 00000000
+
+  halRfWriteReg(PKTCTRL1, 0x00); // Preamble quality estimator threshold=0   ; APPEND_STATUS=0; no addr check
+  halRfWriteReg(PKTCTRL0, 0x00); // fix length , no CRC
+  halRfWriteReg(FSCTRL1, 0x08);  // Frequency Synthesizer Control
+
+  writeFrequency(freq); // Write frequency
+
+  halRfWriteReg(MDMCFG4, 0xF6);  // Modem Configuration   RX filter BW = 58Khz
+  halRfWriteReg(MDMCFG3, 0x83);  // Modem Configuration   26M*((256+83h)*2^6)/2^28 = 2.4kbps
+  halRfWriteReg(MDMCFG2, 0x02);  // Modem Configuration   2-FSK;  no Manchester ; 16/16 sync word bits detected
+  halRfWriteReg(MDMCFG1, 0x00);  // Modem Configuration num preamble 2=>0 , Channel spacing_exp
+  halRfWriteReg(MDMCFG0, 0x00);  // MDMCFG0 Channel spacing = 25Khz
+  halRfWriteReg(DEVIATN, 0x15);  // 5.157471khz
+  halRfWriteReg(MCSM1, 0x00);    // CCA always ; default mode IDLE
+  halRfWriteReg(MCSM0, 0x18);    // Main Radio Control State Machine Configuration
+  halRfWriteReg(FOCCFG, 0x1D);   // Frequency Offset Compensation Configuration
+  halRfWriteReg(BSCFG, 0x1C);    // Bit Synchronization Configuration
+  halRfWriteReg(AGCCTRL2, 0xC7); // AGC Control
+  halRfWriteReg(AGCCTRL1, 0x00); // AGC Control
+  halRfWriteReg(AGCCTRL0, 0xB2); // AGC Control
+  halRfWriteReg(WORCTRL, 0xFB);  // Wake On Radio Control
+  halRfWriteReg(FREND1, 0xB6);   // Front End RX Configuration
+  halRfWriteReg(FSCAL3, 0xE9);   // Frequency Synthesizer Calibration
+  halRfWriteReg(FSCAL2, 0x2A);   // Frequency Synthesizer Calibration
+  halRfWriteReg(FSCAL1, 0x00);   // Frequency Synthesizer Calibration
+  halRfWriteReg(FSCAL0, 0x1F);   // Frequency Synthesizer Calibration
+  halRfWriteReg(TEST2, 0x81);    // Various Test Settings link to adc retention
+  halRfWriteReg(TEST1, 0x35);    // Various Test Settings link to adc retention
+  halRfWriteReg(TEST0, 0x09);    // Various Test Settings link to adc retention
 
   writeBurstReg(PATABLE_ADDR, PA, 8);
 }
 
-void CC1101::writeFrequency(float mhz) {
+void CC1101::writeFrequency(float mhz)
+{
   byte freq2 = 0;
   byte freq1 = 0;
   byte freq0 = 0;
 
-  //Serial.printf("%.4f Mhz : ", mhz);
+  // Serial.printf("%.4f Mhz : ", mhz);
 
-  for (bool i = 0; i == 0;) {
-    if (mhz >= 26) {
+  for (bool i = 0; i == 0;)
+  {
+    if (mhz >= 26)
+    {
       mhz -= 26;
       freq2 += 1;
     }
-    else if (mhz >= 0.1015625) {
+    else if (mhz >= 0.1015625)
+    {
       mhz -= 0.1015625;
       freq1 += 1;
     }
-    else if (mhz >= 0.00039675) {
+    else if (mhz >= 0.00039675)
+    {
       mhz -= 0.00039675;
       freq0 += 1;
     }
-    else { i = 1; }
+    else
+    {
+      i = 1;
+    }
   }
-  if (freq0 > 255) { freq1 += 1; freq0 -= 256; }
+  if (freq0 > 255)
+  {
+    freq1 += 1;
+    freq0 -= 256;
+  }
 
   halRfWriteReg(FREQ2, freq2);
   halRfWriteReg(FREQ1, freq1);

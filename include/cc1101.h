@@ -4,7 +4,8 @@
 class CC1101
 {
 public:
-  enum ChipStatusState {
+  enum ChipStatusState
+  {
     CHIP_SS_IDLE = 0,            // IDLE state
     CHIP_SS_RX = 1,              // Receive mode
     CHIP_SS_TX = 2,              // Transmit mode
@@ -18,61 +19,61 @@ public:
   CC1101(uint8_t gd0_pin);
   /**
    * @brief Configure GDO0 pin in INPUT, configure SPI and print version of chip
-   * 
+   *
    */
   void init(void);
   /**
    * @brief Do a reset + configureRF_0
-   * 
-   * @param freq 
+   *
+   * @param freq
    */
   void setFrequency(float freq);
   /**
    * @brief Get the statistics for RF link quality. Update lqi, freqEst and rssiDbm.
-   * 
+   *
    */
   void getRxStats(void);
   /**
    * @brief Read the fifo data in RX from CC1101.
-   * 
-   * @param timeoutMs 
-   * @param totalSizeBytes 
-   * @param rxBuffer 
-   * @return uint32_t 
+   *
+   * @param timeoutMs
+   * @param totalSizeBytes
+   * @param rxBuffer
+   * @return uint32_t
    */
   uint32_t readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer);
   /**
    * @brief Print all the registers from CC1101
-   * 
+   *
    */
   void printRegistersSettings(void);
   /**
    * @brief Print the version and part number of CC1101
-   * 
+   *
    */
   void version(void);
   /**
    * @brief Wait for GDO0 to change
-   * 
-   * @param voltageLevel 
-   * @param timeoutMs 
-   * @return true 
-   * @return false 
+   *
+   * @param voltageLevel
+   * @param timeoutMs
+   * @return true
+   * @return false
    */
   bool waitForGdo0Change(uint8_t voltageLevel, uint32_t timeoutMs);
   /**
    * @brief Wait the chip status to be in the desired state
-   * 
-   * @param state 
-   * @return true 
-   * @return false 
+   *
+   * @param state
+   * @return true
+   * @return false
    */
   bool waitForState(ChipStatusState state);
   /**
    * @brief Convert RSSI to dbm
-   * 
-   * @param rssi_dec 
-   * @return int8_t 
+   *
+   * @param rssi_dec
+   * @return int8_t
    */
   int8_t rssiTo2dbm(uint8_t rssi_dec);
 
@@ -96,25 +97,25 @@ private:
   // Internal
   /**
    * @brief Go into IDLE and flush FIFO RX/TX
-   * 
+   *
    */
   void reset(void);
   /**
    * @brief Write calibration
-   * 
-   * @param timeoutMs 
+   *
+   * @param timeoutMs
    */
   void calibrateAndCompensate(uint32_t timeoutMs);
   /**
-   * @brief Initial configuration for all the registers 
-   * 
-   * @param freq 
+   * @brief Initial configuration for all the registers
+   *
+   * @param freq
    */
   void configureRF_0(float freq);
   /**
    * @brief Calculate the frequency values and write them to the registers
-   * 
-   * @param mhz 
+   *
+   * @param mhz
    */
   void writeFrequency(float mhz);
 
