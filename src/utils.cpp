@@ -52,70 +52,79 @@ uint16_t crc_kermit(const unsigned char *input_ptr, size_t num_bytes)
  */
 uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_t *outputBuffer)
 {
-    uint32_t inputBitIndex = 0;  // Index to traverse input buffer bit by bit
-    uint32_t outputBitIndex = 0; // Index to traverse output buffer bit by bit
-    const uint8_t bitsPerByte = 8;
 
-    // Initialize the output buffer to 0
-    memset(outputBuffer, 0, (inputBufferLen * 13 / 8) + 2); // Ensures sufficient space for encoded data
+    // Adds a start and stop bit and reverses the bit order.
+    // 76543210 76543210 76543210 76543210
+    // is encoded to:
+    // #0123456 7###0123 4567###0 1234567# ##012345 6s7# (# -> Start/Stop bit)
 
-    // Process each bit in the input buffer
-    for (inputBitIndex = 0; inputBitIndex < (inputBufferLen * bitsPerByte); ++inputBitIndex)
+    uint32_t bytepos = 0;
+    uint32_t bitpos = 0;
+    uint32_t i = 0;
+    uint32_t j = 0;
+
+    for (i = 0; i < (inputBufferLen * 8); i++)
     {
-
-        // Every 8 input bits, insert stop bits (3 stop bits) and a start bit
-        if (inputBitIndex % bitsPerByte == 0)
+        // printf("\ni=%u",i);
+        if (i % 8 == 0)
         {
-            if (inputBitIndex > 0)
+            if (i > 0)
             {
-                // Insert 3 stop bits (1)
-                for (uint8_t i = 0; i < 3; ++i)
-                {
-                    outputBuffer[outputBitIndex / bitsPerByte] |= 1 << (7 - (outputBitIndex % bitsPerByte));
-                    ++outputBitIndex;
-                }
-            }
+                // printf(" j=%u stopBIT",j);
+                //  Insert stop bit (3)
+                bytepos = j / 8;
+                bitpos = j % 8;
+                outputBuffer[bytepos] |= 1 << (7 - bitpos);
+                j++;
+
+                bytepos = j / 8;
+                bitpos = j % 8;
+                outputBuffer[bytepos] |= 1 << (7 - bitpos);
+                j++;
+
+                bytepos = j / 8;
+                bitpos = j % 8;
+                outputBuffer[bytepos] |= 1 << (7 - bitpos);
+                j++;
+            } // stop bit
 
             // Insert start bit (0)
-            outputBuffer[outputBitIndex / bitsPerByte] &= ~(1 << (7 - (outputBitIndex % bitsPerByte)));
-            ++outputBitIndex;
-        }
+            bytepos = j / 8;
+            bitpos = j % 8;
+            // printf(" j=%u startBIT",j);
+            outputBuffer[bytepos] &= ~(1 << (7 - bitpos));
+            j++;
+        } // start stop bit
 
-        // Retrieve current bit from the input buffer, without reversing bit order prematurely
-        uint32_t byteIndex = inputBitIndex / bitsPerByte;
-        uint32_t bitInByte = inputBitIndex % bitsPerByte;
-        uint8_t currentBit = (inputBuffer[byteIndex] >> bitInByte) & 1; // No reversal yet
-
-        // Write the current bit to the output buffer with the correct bit position reversal
-        uint32_t outputBytePos = outputBitIndex / bitsPerByte;
-        uint32_t outputBitPos = 7 - (outputBitIndex % bitsPerByte);
-
-        if (currentBit)
+        bytepos = i / 8;
+        bitpos = i % 8;
+        uint8_t mask = 1 << bitpos;
+        if ((inputBuffer[bytepos] & mask) > 0)
         {
-            outputBuffer[outputBytePos] |= 1 << outputBitPos;
+            bytepos = j / 8;
+            bitpos = 7 - (j % 8);
+            outputBuffer[bytepos] |= 1 << bitpos;
         }
         else
         {
-            outputBuffer[outputBytePos] &= ~(1 << outputBitPos);
+            bytepos = j / 8;
+            bitpos = 7 - (j % 8);
+            outputBuffer[bytepos] &= ~(1 << bitpos);
         }
 
-        ++outputBitIndex;
-    }
+        j++;
+    } // for
 
-    // Insert additional stop bits (if any remaining bits in the last byte)
-    while (outputBitIndex % bitsPerByte != 0)
+    // insert additional stop bit until end of byte
+    while (j % 8 > 0)
     {
-        uint32_t outputBytePos = outputBitIndex / bitsPerByte;
-        uint32_t outputBitPos = 7 - (outputBitIndex % bitsPerByte);
-        outputBuffer[outputBytePos] |= 1 << outputBitPos;
-        ++outputBitIndex;
+        bytepos = j / 8;
+        bitpos = 7 - (j % 8);
+        outputBuffer[bytepos] |= 1 << bitpos;
+        j++;
     }
-
-    // Terminate the buffer with 0xFF
-    outputBuffer[(outputBitIndex / bitsPerByte) + 1] = 0xFF;
-
-    // Return the total length of the output buffer (bytes)
-    return (outputBitIndex / bitsPerByte) + 2;
+    outputBuffer[bytepos + 1] = 0xFF;
+    return bytepos + 2;
 }
 
 uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer)
