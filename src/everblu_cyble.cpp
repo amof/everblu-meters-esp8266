@@ -216,8 +216,8 @@ uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t radianFrameSizeB
     if (_cc1101->waitForState(_cc1101->CHIP_SS_RX) == false)
         return 0; // If not in correct state, return
 
-    // Serial.println("[Everblu] Wait for GDO0 change HIGH");
-    if (!_cc1101->waitForGdo0Change(HIGH, timeoutMs))
+    // Serial.println("[Everblu] Wait for GDO0 change LOW");
+    if (!_cc1101->waitForGdo0Change(timeoutMs))
         return 0;
 
     if (_cc1101->readFifoData(timeoutMs, 1, rxBuffer) == 0)
