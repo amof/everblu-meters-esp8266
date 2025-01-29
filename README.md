@@ -10,6 +10,11 @@ Meters supported:
 
 - Itron EverBlu Cyble Enhanced
 
+## Current State
+
+This fork has the everblu library completely rewritten from scratch.
+As a consequence, there are a few things missing and today a blocking bug where the ESP is not able to communicate with the Everblu. Investigation is on-going and if you wish to help, don't hesitate to do it.
+
 ## Features
 
 - Completely rewritten code of cc1101 to improve reliability and understanding
