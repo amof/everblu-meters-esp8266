@@ -582,13 +582,13 @@ uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t expectedFrameByt
     // Stage 1: lock on the start of the sync pattern at 2.4kbps
     initializeForSyncPatternReception();
     if (_cc1101->strobeAndWait(SRX, _cc1101->CHIP_SS_RX) &&
-        _cc1101->waitForGdo0Change(timeoutMs) &&
+        _cc1101->waitForGdo0Assert(timeoutMs) &&
         _cc1101->readFifoData(timeoutMs, 1, rxBuffer) != 0)
     {
         // Stage 2: switch to 9.59kbps to capture the payload 4x oversampled
         initializeForDataReception();
         if (_cc1101->strobeAndWait(SRX, _cc1101->CHIP_SS_RX) &&
-            _cc1101->waitForGdo0Change(timeoutMs))
+            _cc1101->waitForGdo0Assert(timeoutMs))
         {
             totalBytesReceived = _cc1101->readFifoData(timeoutMs, oversampledSize, rxBuffer);
             _cc1101->getRxStats();

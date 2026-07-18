@@ -27,6 +27,12 @@ The long frame carrying the meter's consumption data. Its payload positions are
 fixed offsets, not a parsed structure.
 _Avoid_: meter report, meter data
 
+**Master ack**:
+The short frame the reader is meant to send back to close the exchange, after
+the meter response. Part of the protocol as documented, but never sent by this
+reader, nor by the implementation it descends from; the meter completes the
+exchange without it.
+
 **Reading**:
 One completed exchange yielding a current index. The meter counts these itself
 and reports the total, which is how the fork detects a successful decode.

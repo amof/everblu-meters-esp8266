@@ -53,13 +53,21 @@ public:
    */
   void version(void);
   /**
-   * @brief Wait for GDO0 to change
+   * @brief Block until GDO0 asserts, i.e. until the sync word is received.
+   *
+   * Assumes IOCFG0 = 0x06, where GDO0 goes HIGH on sync word sent/received and
+   * LOW again at the end of the packet. The pin is therefore LOW on entry and
+   * this waits for the rising edge.
+   *
+   * The polarity is in the name on purpose: this was previously
+   * `waitForGdo0Change`, which said nothing about direction, and a refactor
+   * silently inverted it so that it returned immediately and the caller read
+   * the FIFO before the frame had arrived.
    *
    * @param timeoutMs
-   * @return true
-   * @return false
+   * @return false on timeout
    */
-  bool waitForGdo0Change(uint32_t timeoutMs);
+  bool waitForGdo0Assert(uint32_t timeoutMs);
   /**
    * @brief Wait the chip status to be in the desired state
    *
@@ -81,9 +89,9 @@ public:
   /**
    * @brief Force the chip to IDLE, then flush both FIFOs.
    *
-   * Datasheet Table 42: SFTX and SFRX may only be issued in IDLE,
-   * TXFIFO_UNDERFLOW or RXFIFO_OVERFLOW. Going through IDLE first makes the
-   * flush legal from any state.
+   * Datasheet Table 42 is per-strobe: SFTX only in IDLE or TXFIFO_UNDERFLOW,
+   * SFRX only in IDLE or RXFIFO_OVERFLOW. Going through IDLE first makes both
+   * flushes legal from any state without having to know which.
    */
   void idleAndFlush(void);
   /**
@@ -100,7 +108,7 @@ public:
    * @brief Block until the TX FIFO has room for at least minFreeBytes.
    *
    * This is the backpressure primitive: the caller must never write more than
-   * the FIFO can hold (datasheet 10.1 - a TX FIFO overflow corrupts the FIFO
+   * the FIFO can hold (datasheet 20 - a TX FIFO overflow corrupts the FIFO
    * content) and must never let it run dry mid-packet (datasheet 15.4 -
    * TXFIFO_UNDERFLOW can only be left via SFTX, and writing to an underflowed
    * FIFO does not restart TX).
@@ -140,7 +148,7 @@ public:
   uint8_t status_FIFO_ReadByte = 0;
   uint8_t lqi = 0;
   uint8_t freqEst = 0;
-  uint8_t rssiDbm = 0;
+  int8_t rssiDbm = 0; // Signed: every real RSSI reading is negative
 
 private:
   int _spi_speed = 0;

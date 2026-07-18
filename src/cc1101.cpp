@@ -94,13 +94,15 @@ void CC1101::version(void)
   delay(1);
 }
 
-bool CC1101::waitForGdo0Change(uint32_t timeoutMs)
+bool CC1101::waitForGdo0Assert(uint32_t timeoutMs)
 {
   uint32_t elapsedTime = 0;
-  bool gdo0_has_changed = false;
+  bool gdo0_has_asserted = false;
 
-  // While not dropping GDO pin
-  while ((digitalRead(_gdo_pin) == HIGH) && (elapsedTime < timeoutMs))
+  // IOCFG0 = 0x06: GDO0 goes HIGH when the sync word is received. It is LOW
+  // when we get here, so we wait for the rising edge. Waiting for it to go LOW
+  // instead returns immediately and reads the FIFO before the frame arrives.
+  while ((digitalRead(_gdo_pin) == LOW) && (elapsedTime < timeoutMs))
   {
     delay(1);
     elapsedTime++;
@@ -108,15 +110,14 @@ bool CC1101::waitForGdo0Change(uint32_t timeoutMs)
 
   if (elapsedTime >= timeoutMs)
   {
-    LOG("[CC1101] TMO GDO after %ums\n", timeoutMs);
+    LOG("[CC1101] TMO waiting for GDO0 to assert after %ums\n", timeoutMs);
   }
   else
   {
-    // LOG("[CC1101] GDO detected\n");
-    gdo0_has_changed = true;
+    gdo0_has_asserted = true;
   }
 
-  return gdo0_has_changed;
+  return gdo0_has_asserted;
 }
 
 bool CC1101::waitForState(ChipStatusState state)
@@ -217,7 +218,7 @@ void CC1101::getRxStats()
   rssiDbm = rssiTo2dbm(halRfReadReg(RSSI_ADDR));
 
   LOG("[CC1101] Rx statistics:\n");
-  LOG("\tRSSI=%u\n", rssiDbm);
+  LOG("\tRSSI=%ddBm\n", rssiDbm);
   LOG("\tLQI=%u\n", lqi);
   LOG("\tFreq Est=%u\n", freqEst);
 }
@@ -270,7 +271,7 @@ void CC1101::halRfWriteReg(uint8_t reg_addr, uint8_t value)
   uint8_t len = 2;
   spiTransfert(0, tbuf, len);
   status_FIFO_FreeByte = tbuf[0] & 0x0F;
-  status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x0F);
+  status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x07);
 }
 
 uint8_t CC1101::halRfReadReg(uint8_t spi_instr)
@@ -285,8 +286,12 @@ uint8_t CC1101::halRfReadReg(uint8_t spi_instr)
   // Two bytes are received:
   // 1st: Chip status byte (status + fifo byte)
   // 2nd: Registry content
+  // Table 23: bit 7 is CHIP_RDYn, bits 6:4 are STATE, bits 3:0 are
+  // FIFO_BYTES_AVAILABLE. STATE is three bits, so masking four would fold
+  // CHIP_RDYn into the state and make every comparison fail once the crystal
+  // is not yet stable.
   status_FIFO_ReadByte = rbuf[0] & 0x0F;
-  status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x0F);
+  status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x07);
   value = rbuf[1];
   return value;
 }
@@ -299,7 +304,7 @@ void CC1101::writeCmd(uint8_t spi_instr)
   // When writing a command strobe the chip status byte is returned on SO.
   // On a write access FIFO_BYTES_AVAILABLE means free bytes in the TX FIFO.
   status_FIFO_FreeByte = tbuf[0] & 0x0F;
-  status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x0F);
+  status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x07);
 }
 
 void CC1101::readBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
@@ -314,7 +319,7 @@ void CC1101::readBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
     pArr[i] = rbuf[i + 1];
   }
   status_FIFO_ReadByte = rbuf[0] & 0x0F;
-  status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x0F);
+  status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x07);
 }
 
 void CC1101::writeBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
@@ -328,7 +333,7 @@ void CC1101::writeBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
   }
   spiTransfert(0, tbuf, len + 1);
   status_FIFO_FreeByte = tbuf[len] & 0x0F;
-  status_state = static_cast<ChipStatusState>((tbuf[len] >> 4) & 0x0F);
+  status_state = static_cast<ChipStatusState>((tbuf[len] >> 4) & 0x07);
 }
 
 int8_t CC1101::rssiTo2dbm(uint8_t rssi_dec)
@@ -372,9 +377,9 @@ void CC1101::reset(void)
   digitalWrite(PIN_SPI_SS, HIGH);
   delayMicroseconds(5);
   digitalWrite(PIN_SPI_SS, LOW);
-  delayMicroseconds(10);
+  delayMicroseconds(45); // 19.1.1: hold CSn low for at least 40us
   digitalWrite(PIN_SPI_SS, HIGH);
-  delayMicroseconds(45); // Min 40us with CSn high
+  delayMicroseconds(45); // 19.1.1: and then high for at least 40us
 
   SPI.beginTransaction(SPISettings(_spi_speed, MSBFIRST, SPI_MODE0));
 
@@ -504,12 +509,6 @@ void CC1101::writeFrequency(float mhz)
       i = 1;
     }
   }
-  if (freq0 > 255)
-  {
-    freq1 += 1;
-    freq0 -= 256;
-  }
-
   halRfWriteReg(FREQ2, freq2);
   halRfWriteReg(FREQ1, freq1);
   halRfWriteReg(FREQ0, freq0);

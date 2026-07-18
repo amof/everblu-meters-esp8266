@@ -29,4 +29,5 @@ Two follow-on constraints come from the same place and must not be "simplified"
 either: the TX FIFO has to be loaded *before* the STX strobe, or the chip
 underflows immediately on entering TX; and the master request may only be
 written once the FIFO has 39 free bytes, because a TX FIFO overflow corrupts the
-FIFO content (§10.1) and would put a malformed request on the air.
+FIFO content (§20, "A TX FIFO overflow will result in an error in the TX FIFO
+content") and would put a malformed request on the air.
