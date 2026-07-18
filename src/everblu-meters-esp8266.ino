@@ -16,6 +16,7 @@
 #include <coredecls.h>
 #include "everblu_mqtt.h"
 #include "everblu_cyble.h"
+#include "everblu_log.h"
 
 // Optional - only for DEBUG
 #define DEBUG_MQTT
@@ -23,8 +24,14 @@
 const char *NtpServer = "myNtpServer";
 const char *TZstr = "UTC+0,M3.5.0,M10.5.0/3"; // https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
 
-// User defined
-EspMQTTClient client(
+// User defined - read these off the meter label (see meter_label.png)
+#define METER_YEAR 20      // Two-digit year, e.g. 20 for a meter marked 20
+#define METER_SERIAL 123456 // Serial WITHOUT any leading zero. A leading zero
+                            // would make this an octal literal and silently
+                            // change the value (or fail to compile on 8 or 9).
+#define GDO0_PIN 5          // GPIO connected to the CC1101 GDO0 pin
+
+EspMQTTClient mqtt(
     "WifiSSID",
     "WifiPassword",
     "myMqttServer", // MQTT Broker server
@@ -34,50 +41,148 @@ EspMQTTClient client(
 );
 
 EverbluCyble cyble(
-    0,      // GDO0 pin
-    yy,     // Year
-    0123456 // Serial without leading zero
-);
+    GDO0_PIN,
+    METER_YEAR,
+    METER_SERIAL);
+
+// How often to check whether the scheduled reading time has arrived. The check
+// itself is date-based, so this only bounds how late a reading can start.
+#define SCHEDULE_TICK_MS (1000UL * 60)
 
 // Internal variables
 bool cbtime_set = false;
+bool schedule_started = false;
 
-void onUpdateData()
+/**
+ * @brief Parse "HH:MM" into hour and minute.
+ *
+ * Home Assistant enforces the pattern on the text entity, but the topic is
+ * writable by anything on the broker, so the value is validated here too.
+ */
+bool parseHhMm(const String &value, uint8_t *hour, uint8_t *minute)
 {
-  time_t tnow = time(nullptr);
-  struct tm *ptm = gmtime(&tnow);
-  Serial.printf("Current date (UTC) : %04d/%02d/%02d %02d:%02d:%02d - %s\n", ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, ptm->tm_sec, String(tnow, DEC).c_str());
+  int separator = value.indexOf(':');
+  if (separator < 1)
+    return false;
 
-  char iso8601[128];
-  strftime(iso8601, sizeof iso8601, "%FT%TZ", gmtime(&tnow));
-  // cyble.getDataFromMeter();
+  long h = value.substring(0, separator).toInt();
+  long m = value.substring(separator + 1).toInt();
+  if (h < 0 || h > 23 || m < 0 || m > 59)
+    return false;
 
-  if (cyble.num_of_readings == 0 || cyble.current_index == 0)
+  *hour = (uint8_t)h;
+  *minute = (uint8_t)m;
+  return true;
+}
+
+/**
+ * @brief Publish the schedule currently in force as "HH:MM".
+ */
+void publishScheduledTime()
+{
+  // Oversized: the values are always 2 digits, but the compiler cannot prove it.
+  char formatted[8];
+  snprintf(formatted, sizeof(formatted), "%02u:%02u", cyble.scheduledHour(), cyble.scheduledMinute());
+  mqtt.publish(scheduleTimeStateTopic, formatted, true);
+}
+
+/**
+ * @brief Publish the outcome of a read attempt.
+ */
+void publishResult(MeterReadResult result)
+{
+  switch (result)
   {
-    Serial.println("Unable to retrieve data from meter. Retry later...");
+  case METER_READ_OK:
+    digitalWrite(LED_BUILTIN, LOW); // turned on
+    mqtt.publish(litersStateTopic, String(cyble.current_index), true);
+    mqtt.publish(batteryStateTopic, String(cyble.battery_lifetime), true);
+    mqtt.publish(counterStateTopic, String(cyble.num_of_readings), true);
+    mqtt.publish(statusStateTopic, "ok", true);
+    break;
 
-    // Call back this function in 10 sec (in miliseconds)
-    mqtt.executeDelayed(1000 * 10, onUpdateData);
+  case METER_ASLEEP:
+    mqtt.publish(statusStateTopic, "asleep", true);
+    break;
 
+  case METER_NO_RESPONSE:
+    Serial.println("Unable to retrieve data from meter.");
+    mqtt.publish(statusStateTopic, cyble.isProvisioned() ? "no_response" : "not_provisioned", true);
+    break;
+
+  case METER_BUSY:
+    // Another read or sweep is already running; leave its status in place.
+    break;
+  }
+}
+
+/**
+ * @brief Read the meter now, whatever the schedule says.
+ */
+void readNow()
+{
+  if (!cbtime_set)
+  {
+    Serial.println("Clock not synchronized yet, refusing to transmit");
+    mqtt.publish(statusStateTopic, "no_clock", true);
     return;
   }
 
-  digitalWrite(LED_BUILTIN, LOW); // turned on
+  mqtt.publish(statusStateTopic, "reading", true);
+  publishResult(cyble.readMeter(time(nullptr)));
+}
 
-  // Push to MQTT
+/**
+ * @brief Forget the stored frequency and sweep the whole band for it.
+ */
+void scanNow()
+{
+  if (!cbtime_set)
+  {
+    Serial.println("Clock not synchronized yet, refusing to transmit");
+    mqtt.publish(statusStateTopic, "no_clock", true);
+    return;
+  }
+
+  mqtt.publish(statusStateTopic, "sweeping", true);
+  cyble.forgetMeter();
+  publishResult(cyble.scanForMeter(time(nullptr)));
+}
+
+/**
+ * @brief Periodic tick that performs the scheduled daily reading.
+ */
+void onScheduleTick()
+{
+  mqtt.executeDelayed(SCHEDULE_TICK_MS, onScheduleTick);
+
+  // Do not transmit before the clock is trustworthy: the wakeup-window check
+  // is the only thing preventing a pointless multi-minute sweep at night.
+  if (!cbtime_set)
+  {
+    Serial.println("Clock not synchronized yet, waiting...");
+    return;
+  }
+
+  bool performed = false;
+  MeterReadResult result = cyble.readIfDue(time(nullptr), &performed);
+
+  // Stay quiet on the ticks where nothing was due, so the status topic reflects
+  // real attempts rather than flapping every minute.
+  if (performed)
+    publishResult(result);
 }
 
 void onConnectionEstablished()
 {
   Serial.println("Connected to MQTT Broker");
 
+  // Only now is publishing possible, so this is where the log starts mirroring.
+  // Anything logged before this point stays Serial-only.
+  logSetSink([](const char *line) { mqtt.publish(logTopic, line); });
+
   // Update time with NTP server
   request_ntp_time();
-
-  /* Use this to trigger update of firmware + manual update
-    mqtt.subscribe("everblu/cyble/trigger", [](const String& message) {
-    });
-  */
 
   Serial.println("> Send MQTT config for HA.");
   // Publish the discovery configuration messages
@@ -87,10 +192,42 @@ void onConnectionEstablished()
   delay(50); // Do not remove
   mqtt.publish(counterConfigTopic, numReadingsConfigPayload, true);
   delay(50); // Do not remove
+  mqtt.publish(statusConfigTopic, statusConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(scheduleTimeConfigTopic, scheduleTimeConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(buttonReadConfigTopic, buttonReadConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(buttonScanConfigTopic, buttonScanConfigPayload, true);
+  delay(50); // Do not remove
 
-  onUpdateData();
+  // Reflect the stored schedule so the Home Assistant entity shows the value
+  // actually in force rather than an empty state.
+  publishScheduledTime();
 
-  cyble.lookForMeter();
+  mqtt.subscribe(scheduleTimeSetTopic, [](const String &message) {
+    uint8_t hour = 0;
+    uint8_t minute = 0;
+    if (!parseHhMm(message, &hour, &minute))
+    {
+      LOG("Ignoring unparsable reading time '%s'\n", message.c_str());
+      return;
+    }
+    if (cyble.setScheduledTime(hour, minute))
+      publishScheduledTime();
+  });
+
+  mqtt.subscribe(commandReadTopic, [](const String &message) { readNow(); });
+  mqtt.subscribe(commandScanTopic, [](const String &message) { scanNow(); });
+
+  // Start the schedule once and only once. onConnectionEstablished() fires on
+  // every MQTT reconnection, and a read can cost minutes of transmission, so
+  // starting it here unguarded would let a flapping broker drive the radio.
+  if (!schedule_started)
+  {
+    schedule_started = true;
+    onScheduleTick();
+  }
 }
 
 void setup()
@@ -105,21 +242,23 @@ void setup()
 #ifdef DEBUG_MQTT
   mqtt.enableDebuggingMessages(true);
 #endif
+
+  // A sweep blocks for minutes; keep the MQTT connection alive across it and
+  // drain the log so progress is visible while it runs rather than only after.
+  cyble.setBetweenAttemptsCallback([]() {
+    logFlush();
+    mqtt.loop();
+  });
+
   cyble.init();
 }
 
 void loop()
 {
   mqtt.loop();
-}
-
-/**
- *
- */
-void next_wake_up()
-{
-  time_t tnow = time(nullptr);
-  struct tm *ptm = gmtime(&tnow);
+  // Drain here rather than at the point of logging: publishing is network I/O
+  // and much of what we log happens inside timing-sensitive radio sequences.
+  logFlush();
 }
 
 /**

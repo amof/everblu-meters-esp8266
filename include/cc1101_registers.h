@@ -77,6 +77,14 @@
 #define TXBYTES_ADDR 0xFA    // Underflow and # of bytes in TXFIFO
 #define RXBYTES_ADDR 0xFB    // Overflow and # of bytes in RXFIFO
 #define RXBYTES_MASK 0x7F    // Mask "# of bytes" field in _RXBYTES
+#define TXBYTES_MASK 0x7F    // Mask "# of bytes" field in _TXBYTES
+#define TXBYTES_UNDERFLOW 0x80 // TXFIFO_UNDERFLOW bit in _TXBYTES
+#define RXBYTES_OVERFLOW 0x80  // RXFIFO_OVERFLOW bit in _RXBYTES
+
+/**
+ * FIFO geometry (datasheet 10.5: 64-byte TX FIFO and 64-byte RX FIFO)
+ */
+#define CC1101_FIFO_SIZE 64
 
 /**
  * Command strobes

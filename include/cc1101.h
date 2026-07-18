@@ -69,6 +69,59 @@ public:
    */
   bool waitForState(ChipStatusState state);
   /**
+   * @brief Issue a command strobe and wait for the chip to settle in a state.
+   *
+   * @param strobe Command strobe to issue
+   * @param expected State the chip is expected to reach
+   * @param settleMs Delay before polling, to cover the state transition time
+   *                 (datasheet Table 34: IDLE->TX/RX with calibration is 799us)
+   * @return true if the chip reached the expected state
+   */
+  bool strobeAndWait(uint8_t strobe, ChipStatusState expected, uint32_t settleMs = 4);
+  /**
+   * @brief Force the chip to IDLE, then flush both FIFOs.
+   *
+   * Datasheet Table 42: SFTX and SFRX may only be issued in IDLE,
+   * TXFIFO_UNDERFLOW or RXFIFO_OVERFLOW. Going through IDLE first makes the
+   * flush legal from any state.
+   */
+  void idleAndFlush(void);
+  /**
+   * @brief Read a status register, working around the SPI read errata.
+   *
+   * The value must be read twice in a row identically, otherwise the value may
+   * be a mix of two states.
+   *
+   * @param addr Status register address (already carries the burst bit)
+   * @return Stable register value
+   */
+  uint8_t readStatusReg(uint8_t addr);
+  /**
+   * @brief Block until the TX FIFO has room for at least minFreeBytes.
+   *
+   * This is the backpressure primitive: the caller must never write more than
+   * the FIFO can hold (datasheet 10.1 - a TX FIFO overflow corrupts the FIFO
+   * content) and must never let it run dry mid-packet (datasheet 15.4 -
+   * TXFIFO_UNDERFLOW can only be left via SFTX, and writing to an underflowed
+   * FIFO does not restart TX).
+   *
+   * @param minFreeBytes Free space required before returning
+   * @param timeoutMs
+   * @return false on timeout or if the FIFO has already underflowed
+   */
+  bool waitTxFifoFree(uint8_t minFreeBytes, uint32_t timeoutMs);
+  /**
+   * @brief Block until the TX FIFO has been fully transmitted.
+   *
+   * In infinite packet length mode the transmission only ends when the FIFO
+   * runs dry, which the datasheet defines as TXFIFO_UNDERFLOW. Both an empty
+   * FIFO and the underflow flag are therefore accepted as "drained".
+   *
+   * @param timeoutMs
+   * @return false on timeout
+   */
+  bool waitTxFifoDrained(uint32_t timeoutMs);
+  /**
    * @brief Convert RSSI to dbm
    *
    * @param rssi_dec
@@ -95,10 +148,20 @@ private:
 
   // Internal
   /**
-   * @brief Go into IDLE and flush FIFO RX/TX
+   * @brief Reset the chip following the power-on start-up sequence.
    *
+   * Datasheet 19.1.1: toggle CSn, pull it low and wait for SO (MISO) to go low
+   * (CHIP_RDYn), issue SRES with CSn held low, then wait for SO to go low again.
    */
   void reset(void);
+  /**
+   * @brief Wait for MISO to go low (CHIP_RDYn), bounded so a dead chip cannot
+   *        hang the loop until the watchdog reboots the ESP.
+   *
+   * @param timeoutMs
+   * @return false on timeout
+   */
+  bool waitMisoLow(uint32_t timeoutMs);
   /**
    * @brief Write calibration
    *

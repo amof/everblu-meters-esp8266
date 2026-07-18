@@ -209,7 +209,7 @@ void show_in_hex_array(uint8_t *buffer, uint32_t len)
 
 void show_in_hex_one_line(uint8_t *buffer, size_t len)
 {
-    int i = 0;
+    size_t i = 0;
     for (i = 0; i < len; i++)
     {
         Serial.printf("%02X ", buffer[i]);
