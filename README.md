@@ -133,6 +133,29 @@ pio test -e native     # optional: run the desktop tests
 `platformio.ini` targets `board = nodemcu`, which is the NodeMCU **0.9**. For a
 NodeMCU 1.0 (ESP-12E) change it to `nodemcuv2`; the pinout above is unchanged.
 
+### Which firmware is running
+
+Every build stamps itself from git, so there is nothing to remember to bump:
+
+```
+r46.1b09187            46th commit, built from 1b09187, working tree clean
+r46.1b09187+a7dcc5f    the same commit, plus uncommitted changes
+```
+
+It appears in three places: the first serial line at boot, the `Log mirroring
+started` line in the MQTT log, and **Firmware** on the Home Assistant device
+page.
+
+A `+` means the image was built from a working tree that no commit describes —
+the usual case while debugging. The suffix fingerprints those changes, so two
+different dirty builds are never confused, and rebuilding identical source
+twice gives the same version. Without a `+`, the version identifies the source
+exactly.
+
+Generated into `include/version.h` by `scripts/version.py` before each build,
+from `src/`, `include/` and `platformio.ini`. Editing anything else — notes,
+datasheets, editor settings — deliberately leaves the version alone.
+
 ### Updating over WiFi
 
 Once a USB-flashed image is running, later updates go over the network:
@@ -193,6 +216,9 @@ Every entity is tied to `everblu/cyble/availability`, so they grey out when the
 device stops answering — including while it reboots into a new image, and
 permanently if it never comes back. Status alone cannot tell you this: it is
 retained, so a dead device goes on reporting whatever it last managed to say.
+
+The firmware version appears on the device page as **Firmware**, so you can
+check what is actually running without opening a serial console.
 
 > [!NOTE]
 > Status reports the operation that was *requested*, not the one running. A

@@ -122,6 +122,15 @@ _Avoid_: stopping, resetting the radio
 
 **Over-the-air update**:
 Replacing the reader's firmware across the network instead of over a cable. The
-laptop initiates and the reader accepts; nothing is fetched or scheduled by the
-reader itself.
+uploader initiates and the reader accepts; nothing is fetched or scheduled by
+the reader itself.
 _Avoid_: OTA flash, remote update
+
+**Firmware version**:
+Which build of the software a reader is running, derived from the repository
+rather than declared by hand, so it cannot be forgotten or become stale. Counts
+commits and names the one it was built from. A version carrying a `+` suffix was
+built from a working tree that no commit describes — the suffix identifies those
+uncommitted changes, and its absence is the only assurance that the source can
+be recovered from the version alone.
+_Avoid_: build number, release

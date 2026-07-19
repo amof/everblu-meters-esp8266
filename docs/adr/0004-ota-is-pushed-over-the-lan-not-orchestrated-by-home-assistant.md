@@ -8,15 +8,22 @@ an Install button in the dashboard triggers it. We chose the opposite: the
 laptop pushes an image straight to the device with `espota`, and Home Assistant
 is not involved at all.
 
-The deciding argument is that a pull-based design solves a problem we do not
-have. It exists to reach devices the developer's machine cannot, or to schedule
-installs for later. Here the laptop and the reader are on the same LAN, and the
-image has to be compiled on that laptop anyway — there is no version of this
-where a firmware update begins somewhere other than in front of a toolchain.
-Routing the image through Home Assistant would add a file store, a URL to
-configure, a version-comparison protocol and an HTTP client to the firmware,
-none of which shorten the path from "I changed some code" to "the device is
-running it".
+The deciding argument is that a pull-based design buys reach we can obtain more
+cheaply. It exists to reach devices the uploader cannot address, or to schedule
+installs for later. The image has to be compiled on a machine with the toolchain
+regardless — there is no version of this where an update begins somewhere other
+than in front of a compiler — so routing it through Home Assistant adds a file
+store, a URL to configure, a version-comparison protocol and an HTTP client to
+the firmware, none of which shorten the path from "I changed some code" to "the
+device is running it".
+
+The reach argument is not hypothetical here, and this decision nearly went the
+other way because of it. The uploader is a container on a server on a different
+network; the reader is on an isolated IoT VLAN behind OPNsense. They are not
+peers on one LAN. Push still won because making the return path work turned out
+to be two pieces of configuration — pin the callback port, publish it from the
+container — against a permanent HTTP client in the firmware. Had the network
+been genuinely one-way, pull would have been correct.
 
 A pull design is also strictly more dangerous in the failure case we care about.
 It points a device in a cellar at a URL and flashes whatever comes back, whereas
@@ -36,9 +43,20 @@ itself, and a bad image is only recoverable with a cable. `env:esp8266` stays
 the USB environment and `env:esp8266_ota` extends it, so the two differ in
 transport and nothing else.
 
-**Home Assistant cannot tell you the firmware version, and there is no Install
-button.** A future reader of this repository will notice the asymmetry with
-every other feature. That is deliberate, and this file is why.
+**There is no Install button in Home Assistant.** A future reader will notice
+the asymmetry with every other feature. That is deliberate, and this file is
+why. The firmware version *is* reported, as `sw_version` on the device — an
+entity is not needed for that, so the visibility argument for a pull design
+survives without the machinery.
+
+**The image travels in the opposite direction to the command.** The uploader
+sends a UDP invitation, and the device then opens a TCP connection *back* to the
+source address it saw, on `--host_port`. Every hop in that return path has to
+permit a connection the device originates: firewall rules between VLANs, and a
+published port when the uploader is containerised or NATed. `--host_port` must
+be pinned, since espota otherwise picks randomly from 10000-60000 and no rule
+can match it. This is why a device that answers ping can still fail to flash —
+ping only ever exercises the other direction.
 
 **The OTA password is duplicated.** The firmware carries it in
 `include/secrets.h`; the uploader passes it from `platformio_local.ini`. Both

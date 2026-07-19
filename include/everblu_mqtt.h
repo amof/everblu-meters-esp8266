@@ -1,6 +1,11 @@
 #ifndef EVERBLU_MQTT_H
 #define EVERBLU_MQTT_H
 
+// Generated from git before each build; see scripts/version.py. It is a string
+// literal, so it concatenates straight into the discovery payloads below and
+// they stay compile-time constants.
+#include "version.h"
+
 // constexpr gives these internal linkage, so this header stays safe to include
 // from more than one translation unit. A plain `const char *` would not: only
 // the pointee is const, so the pointer itself has external linkage.
@@ -56,7 +61,8 @@ constexpr const char *buttonScanConfigTopic = "homeassistant/button/everblucyble
     "\"identifiers\" : [ \"everblucyble01a\" ],"  \
     "\"name\": \"Everblu Cyble\","                \
     "\"model\": \"Everblu Cyble ESP8266/ESP32\"," \
-    "\"manufacturer\": \"ITRON\""                 \
+    "\"manufacturer\": \"ITRON\","                \
+    "\"sw_version\": \"" FIRMWARE_VERSION "\""    \
     "}"
 
 // JSON payload for water meter index sensor

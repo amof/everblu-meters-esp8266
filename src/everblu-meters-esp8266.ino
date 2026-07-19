@@ -182,7 +182,10 @@ void onConnectionEstablished()
   logSetSnapshotSink([](const char *blob) { mqtt.publish(logRecentTopic, blob, true); });
   // Makes the topic exist as soon as we connect, and marks the boundary in a
   // captured log where Serial-only history ends and MQTT history begins.
-  LOG("[Everblu] Log mirroring started\n");
+  // Naming the firmware on the boundary line rather than its own means every
+  // captured log says which image produced it, without costing a line of the
+  // retained snapshot.
+  LOG("[Everblu] Log mirroring started, firmware %s\n", FIRMWARE_VERSION);
 
   // Cancels the retained "offline" left by the last will, or by the OTA start
   // callback. Published on every reconnect, not just the first, because the
@@ -242,7 +245,9 @@ void setup()
 {
   // Initialize serial link to give feedback
   Serial.begin(115200);
-  Serial.println("Everblu Cyble - Reader");
+  // First line out of the boot, before anything can fail: if the device is in a
+  // reboot loop this is still enough to tell which image is looping.
+  Serial.printf("Everblu Cyble - Reader %s\n", FIRMWARE_VERSION);
 
   // Change the packet size from 128 bytes to 1024
   mqtt.setMaxPacketSize(1024);

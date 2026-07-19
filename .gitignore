@@ -24,6 +24,10 @@
 include/secrets.h
 platformio_local.ini
 
+# Regenerated from git by scripts/version.py on every build. Committing it
+# would mean committing a description of the previous commit.
+include/version.h
+
 # Local poppler build, used to read cc1101.pdf. Not part of the project.
 poppler-*/
 
@@ -79,3 +83,5 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+cc1101.pdf
