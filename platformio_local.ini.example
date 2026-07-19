@@ -10,4 +10,24 @@
 ; The mDNS name, which comes from MQTT_CLIENT_NAME in include/secrets.h.
 ; Use the device's IP address instead if mDNS is unreliable on your network.
 upload_port = everblu-cyble.local
-upload_flags = --auth=choose-an-ota-password
+upload_flags =
+    --auth=choose-an-ota-password
+    ; The image does not travel the way you would expect: your machine sends a
+    ; UDP invitation, then the *device* opens a TCP connection back to this
+    ; port to pull the image. espota picks that port at random (10000-60000)
+    ; unless pinned, which makes a firewall rule impossible to write.
+    ;
+    ; Pin it if the device is on an isolated VLAN or guest network, and allow
+    ; device -> workstation on this port. A blocked return path shows up as
+    ; OTA_CONNECT_ERROR (error 2) in the device log, not as a timeout.
+    --host_port=8266
+    ;
+    ; Do NOT set --host_ip to make the device connect somewhere else: it is the
+    ; address espota *binds* to (default 0.0.0.0), not one it advertises. The
+    ; invitation carries only the port, so the device connects back to whatever
+    ; source IP it saw the invitation arrive from.
+    ;
+    ; That is what makes uploading from a container or a NATed host awkward.
+    ; The invitation is SNATed on the way out, so the device dials the outside
+    ; address — which only reaches the uploader if that port is forwarded back
+    ; in. From Docker, publish it: -p 8266:8266.
