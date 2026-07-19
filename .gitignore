@@ -19,6 +19,14 @@
 .gcc-flags.json
 .pio
 
+# Local configuration and credentials. Both have a committed .example
+# alongside; these copies are the ones with real passwords in them.
+include/secrets.h
+platformio_local.ini
+
+# Local poppler build, used to read cc1101.pdf. Not part of the project.
+poppler-*/
+
 # Prerequisites
 *.d
 

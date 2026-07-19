@@ -91,6 +91,17 @@ public:
      * @brief Discard the stored profile, forcing a full sweep on the next read.
      */
     void forgetMeter();
+    /**
+     * @brief Park the radio: force IDLE and flush both FIFOs.
+     *
+     * Call before anything that reboots the ESP. The CC1101 has no reset line
+     * wired, so it is not reset by the ESP restarting — it keeps transmitting
+     * whatever it was transmitting until init() reaches SRES, which for an OTA
+     * update is the flash write plus the reboot plus the eboot copy. That would
+     * be tens of seconds of unmodulated carrier at 433 MHz from an unattended
+     * device.
+     */
+    void radioIdle();
 
     /** Local time at which the meter is interrogated automatically. */
     uint8_t scheduledHour() const { return _schedule.hour; }

@@ -1,0 +1,13 @@
+; Copy this file to `platformio_local.ini` and fill it in. That copy is
+; gitignored, which is what keeps the OTA password out of the repository.
+;
+; The password necessarily appears twice — here for the uploader, and as
+; OTA_PASSWORD in include/secrets.h for the firmware. They are two different
+; programs authenticating to each other; there is no single place to put it.
+; If they disagree, espota fails with "Authentication Failed".
+
+[env:esp8266_ota]
+; The mDNS name, which comes from MQTT_CLIENT_NAME in include/secrets.h.
+; Use the device's IP address instead if mDNS is unreliable on your network.
+upload_port = everblu-cyble.local
+upload_flags = --auth=choose-an-ota-password

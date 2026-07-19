@@ -13,33 +13,28 @@
  */
 
 #include "EspMQTTClient.h"
+#include <ArduinoOTA.h>
 #include <coredecls.h>
 #include "everblu_mqtt.h"
 #include "everblu_cyble.h"
 #include "everblu_log.h"
+// Deployment configuration and credentials. Gitignored: copy
+// include/secrets.h.example to include/secrets.h and fill it in.
+#include "secrets.h"
 
 // Optional - only for DEBUG
 #define DEBUG_MQTT
 
-const char *NtpServer = "myNtpServer";
-// Europe/Brussels. POSIX inverts the sign: CET-1 means UTC+1.
-// https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
-const char *TZstr = "CET-1CEST,M3.5.0,M10.5.0/3";
-
-// User defined - read these off the meter label (see meter_label.png)
-#define METER_YEAR 20      // Two-digit year, e.g. 20 for a meter marked 20
-#define METER_SERIAL 123456 // Serial WITHOUT any leading zero. A leading zero
-                            // would make this an octal literal and silently
-                            // change the value (or fail to compile on 8 or 9).
-#define GDO0_PIN 5          // GPIO connected to the CC1101 GDO0 pin
+const char *NtpServer = NTP_SERVER;
+const char *TZstr = TZ_STRING;
 
 EspMQTTClient mqtt(
-    "WifiSSID",
-    "WifiPassword",
-    "myMqttServer", // MQTT Broker server
-    "MQTTUsername", // Can be omitted if not needed
-    "MQTTPassword", // Can be omitted if not needed
-    "TestClient"    // Client name that uniquely identify your device
+    WIFI_SSID,
+    WIFI_PASSWORD,
+    MQTT_SERVER,
+    MQTT_USERNAME,
+    MQTT_PASSWORD,
+    MQTT_CLIENT_NAME // Also becomes the mDNS hostname used for OTA uploads
 );
 
 EverbluCyble cyble(
@@ -189,6 +184,11 @@ void onConnectionEstablished()
   // captured log where Serial-only history ends and MQTT history begins.
   LOG("[Everblu] Log mirroring started\n");
 
+  // Cancels the retained "offline" left by the last will, or by the OTA start
+  // callback. Published on every reconnect, not just the first, because the
+  // will fires on every unclean disconnection.
+  mqtt.publish(availabilityTopic, availabilityOnline, true);
+
   // Update time with NTP server
   request_ntp_time();
 
@@ -250,6 +250,38 @@ void setup()
 #ifdef DEBUG_MQTT
   mqtt.enableDebuggingMessages(true);
 #endif
+
+  // Retained, so a client connecting long after the device died still learns it
+  // is dead. Without a will, every entity keeps its last retained value and a
+  // device that never came back from an update goes on reporting "ok".
+  mqtt.enableLastWillMessage(availabilityTopic, availabilityOffline, true);
+
+  // Over-the-air updates. The password is passed explicitly because
+  // enableOTA(NULL) silently reuses the MQTT password instead, which would make
+  // the broker credential a flashing credential without saying so anywhere.
+  mqtt.enableOTA(OTA_PASSWORD);
+
+  ArduinoOTA.onStart([]() {
+    // The CC1101 has no reset line, so the ESP rebooting does not stop it. If
+    // an update lands mid-transmission the chip radiates a carrier until the
+    // new image reaches init() — flash write, reboot and eboot copy, tens of
+    // seconds. Park it while we still can.
+    cyble.radioIdle();
+
+    // Say we are going away rather than waiting for the broker to work it out:
+    // the will only fires once the keepalive expires, leaving the entities
+    // looking healthy for seconds after the device has stopped existing.
+    mqtt.publish(availabilityTopic, availabilityOffline, true);
+    LOG("[Everblu] OTA update starting, rebooting shortly\n");
+    logFlush();
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    // A failed update does not reboot, so the device is still here and the
+    // "offline" published above is now a lie. Take it back.
+    LOG("[Everblu] OTA update failed (error %u)\n", (unsigned)error);
+    mqtt.publish(availabilityTopic, availabilityOnline, true);
+  });
 
   // A sweep blocks for minutes; keep the MQTT connection alive across it and
   // drain the log so progress is visible while it runs rather than only after.

@@ -99,33 +99,24 @@ is the only other safe pin. Avoid the rest:
 
 ## Build & flash
 
-Uses [PlatformIO](https://platformio.org/). Edit
-`src/everblu-meters-esp8266.ino` first:
+Uses [PlatformIO](https://platformio.org/). All configuration lives in two
+gitignored files, so no tracked source needs a local edit and your WiFi password
+cannot ride along in a commit:
 
-```c
-const char *NtpServer = "myNtpServer";
-const char *TZstr = "CET-1CEST,M3.5.0,M10.5.0/3"; // Europe/Brussels
-
-#define METER_YEAR 20       // Two-digit year from the meter label
-#define METER_SERIAL 123456 // Serial, WITHOUT any leading zero
-#define GDO0_PIN 5          // Leave at 5 if you wired GDO0 to D1
-
-EspMQTTClient mqtt(
-  "WifiSSID",
-  "WifiPassword",
-  "myMqttServer",   // MQTT broker
-  "MQTTUsername",   // Omit if not needed
-  "MQTTPassword",   // Omit if not needed
-  "TestClient"      // Unique client name
-);
+```sh
+cp include/secrets.h.example include/secrets.h
+cp platformio_local.ini.example platformio_local.ini
 ```
+
+Fill in `include/secrets.h` — WiFi, MQTT broker, NTP server, POSIX timezone, and
+the meter's year and serial off its label (see `meter_label.png`).
 
 > [!WARNING]
 > **Drop any leading zero from the serial.** `0123456` is an *octal* literal in
 > C — it silently becomes 42798, and a serial containing an 8 or 9 will not
 > compile at all. Write `123456`.
 
-`TZstr` is a [POSIX TZ
+`TZ_STRING` is a [POSIX TZ
 string](https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html),
 not an IANA name — it defaults to Europe/Brussels. Note the sign is inverted:
 `CET-1` means UTC**+**1. Find yours in the `TZ` column of [this
@@ -134,13 +125,42 @@ list](https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv).
 Then:
 
 ```sh
-pio run -t upload      # build and flash
+pio run -t upload      # build and flash over USB
 pio device monitor     # 115200 baud
 pio test -e native     # optional: run the desktop tests
 ```
 
 `platformio.ini` targets `board = nodemcu`, which is the NodeMCU **0.9**. For a
 NodeMCU 1.0 (ESP-12E) change it to `nodemcuv2`; the pinout above is unchanged.
+
+### Updating over WiFi
+
+Once a USB-flashed image is running, later updates go over the network:
+
+```sh
+pio run -e esp8266_ota -t upload
+```
+
+Set `OTA_PASSWORD` in `include/secrets.h` and the matching `--auth=` in
+`platformio_local.ini` — they are two programs authenticating to each other, so
+the password has to appear in both. If they disagree you get *Authentication
+Failed*.
+
+`upload_port` defaults to `everblu-cyble.local`, which is `MQTT_CLIENT_NAME`
+doing double duty as the mDNS hostname. If mDNS is unreliable on your network,
+put the device's IP address there instead.
+
+> [!IMPORTANT]
+> **Set an OTA password.** Anything on your LAN can reach the update port. Leave
+> it empty and `EspMQTTClient` silently reuses your *MQTT* password instead,
+> which is worse than no password because nothing says so.
+
+> [!NOTE]
+> OTA cannot install itself and cannot repair a bad image — the first flash and
+> any recovery need the cable. Updates work during a frequency sweep; the radio
+> is parked before the reboot so it cannot be left transmitting. See
+> [ADR-0004](docs/adr/0004-ota-is-pushed-over-the-lan-not-orchestrated-by-home-assistant.md)
+> for why updates do not go through Home Assistant.
 
 ## First run
 
@@ -168,6 +188,17 @@ Entities appear automatically under one *Everblu Cyble* device:
 
 Readings are published retained on `everblu/cyble/liters`, `.../battery` and
 `.../num_readings`.
+
+Every entity is tied to `everblu/cyble/availability`, so they grey out when the
+device stops answering — including while it reboots into a new image, and
+permanently if it never comes back. Status alone cannot tell you this: it is
+retained, so a dead device goes on reporting whatever it last managed to say.
+
+> [!NOTE]
+> Status reports the operation that was *requested*, not the one running. A
+> daily read that falls back to a full sweep — because the meter has moved off
+> its stored frequency — still shows `reading` for the several minutes that
+> sweep takes.
 
 ## Troubleshooting
 

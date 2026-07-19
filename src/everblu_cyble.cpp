@@ -219,6 +219,16 @@ void EverbluCyble::forgetMeter()
     LOG("[Everblu] Meter profile cleared\n");
 }
 
+void EverbluCyble::radioIdle()
+{
+    // Deliberately ignores _busy. This is called from the OTA start callback,
+    // which fires while a sweep may be mid-flight; refusing because the radio
+    // is busy would leave it transmitting across the reboot, which is the exact
+    // situation this exists to prevent.
+    _cc1101->idleAndFlush();
+    LOG("[Everblu] Radio parked\n");
+}
+
 bool EverbluCyble::isMeterAwake(time_t now) const
 {
     struct tm *local = localtime(&now);

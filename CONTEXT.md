@@ -95,3 +95,33 @@ interrogation may have to fall back on.
 **Reading hour**:
 The local hour at which the reader interrogates the meter automatically, once a
 day. User configuration, not something learned from the meter.
+
+### The reader itself
+
+**Availability**:
+Whether the reader exists and is reachable at all. Orthogonal to status: a
+reader can be available and idle, or unavailable while its last known status was
+`reading`. Only the absence of a reader makes it unavailable, never anything the
+meter does — a meter that never answers leaves the reader perfectly available.
+_Avoid_: online, connected, status
+
+**Status**:
+What the reader is doing, or what it last concluded. A single value covering
+both an activity (`reading`, `sweeping`) and an outcome (`ok`, `no_response`).
+Currently it names the operation the reader was *asked* to perform rather than
+the one it is performing, so an interrogation that falls back to a full sweep
+still reports itself as reading.
+_Avoid_: state, availability
+
+**Parking the radio**:
+Returning the transceiver to idle and discarding whatever it was sending or
+receiving. Necessary before anything that restarts the reader, because the
+transceiver's power state does not follow the reader's — it goes on
+transmitting across a restart until the reader comes back and silences it.
+_Avoid_: stopping, resetting the radio
+
+**Over-the-air update**:
+Replacing the reader's firmware across the network instead of over a cable. The
+laptop initiates and the reader accepts; nothing is fetched or scheduled by the
+reader itself.
+_Avoid_: OTA flash, remote update
