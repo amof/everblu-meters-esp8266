@@ -11,10 +11,26 @@
 // the pointee is const, so the pointer itself has external linkage.
 
 // State topics - the device publishes, Home Assistant reads
-constexpr const char *litersStateTopic = "everblu/cyble/liters";
+constexpr const char *indexStateTopic = "everblu/cyble/index";
 constexpr const char *batteryStateTopic = "everblu/cyble/battery";
-constexpr const char *counterStateTopic = "everblu/cyble/num_readings";
+constexpr const char *readingsStateTopic = "everblu/cyble/readings";
+// The outcome of the most recent interrogation, or what one is doing right now.
+// The full vocabulary, since it is spread across several call sites:
+//   ok             a read completed and the values above were updated
+//   reading        a read is in flight
+//   sweeping       a full frequency sweep is in flight
+//   busy           a request arrived while the radio was already in use
+//   asleep         asked to read outside the meter's wakeup window
+//   no_response    the meter did not answer on any frequency tried
+//   not_provisioned  as above, but no frequency has ever been found
+//   gave_up        the day's attempt budget is spent; waiting for tomorrow
+//   no_clock       asked to transmit before NTP had set the clock
 constexpr const char *statusStateTopic = "everblu/cyble/status";
+// When the last successful read completed, ISO 8601 in UTC. Distinct from the
+// index's own timestamp, which Home Assistant sets on every publish including
+// the retained one replayed at reconnect — this one only moves when the meter
+// actually answered, which is what "is the reader still working" depends on.
+constexpr const char *lastReadStateTopic = "everblu/cyble/last_read";
 constexpr const char *scheduleTimeStateTopic = "everblu/cyble/schedule/time";
 // Verdict of the wiring check: "ok", "spi_failed" or "gdo0_failed". Separate
 // from status because the two have different lifetimes — status is the latest
@@ -47,17 +63,18 @@ constexpr const char *availabilityOffline = "offline";
 // Command topics - Home Assistant publishes, the device subscribes
 constexpr const char *scheduleTimeSetTopic = "everblu/cyble/schedule/time/set";
 constexpr const char *commandReadTopic = "everblu/cyble/command/read";
-constexpr const char *commandScanTopic = "everblu/cyble/command/scan";
+constexpr const char *commandSweepTopic = "everblu/cyble/command/sweep";
 constexpr const char *commandWiringTopic = "everblu/cyble/command/wiring";
 
 // Discovery topics
 constexpr const char *indexConfigTopic = "homeassistant/sensor/everblucyble01a/index/config";
 constexpr const char *batteryConfigTopic = "homeassistant/sensor/everblucyble01a/battery/config";
-constexpr const char *counterConfigTopic = "homeassistant/sensor/everblucyble01a/readings/config";
+constexpr const char *readingsConfigTopic = "homeassistant/sensor/everblucyble01a/readings/config";
 constexpr const char *statusConfigTopic = "homeassistant/sensor/everblucyble01a/status/config";
-constexpr const char *scheduleTimeConfigTopic = "homeassistant/text/everblucyble01a/time/config";
+constexpr const char *lastReadConfigTopic = "homeassistant/sensor/everblucyble01a/last_read/config";
+constexpr const char *scheduleTimeConfigTopic = "homeassistant/text/everblucyble01a/reading_time/config";
 constexpr const char *buttonReadConfigTopic = "homeassistant/button/everblucyble01a/read/config";
-constexpr const char *buttonScanConfigTopic = "homeassistant/button/everblucyble01a/scan/config";
+constexpr const char *buttonSweepConfigTopic = "homeassistant/button/everblucyble01a/sweep/config";
 constexpr const char *wiringConfigTopic = "homeassistant/sensor/everblucyble01a/wiring/config";
 constexpr const char *buttonWiringConfigTopic = "homeassistant/button/everblucyble01a/wiring/config";
 
@@ -78,10 +95,10 @@ constexpr const char *buttonWiringConfigTopic = "homeassistant/button/everblucyb
     "}"
 
 // JSON payload for water meter index sensor
-constexpr const char *currentIndexConfigPayload =
+constexpr const char *indexConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Current Index\","
-    "\"state_topic\": \"everblu/cyble/liters\","
+    "\"state_topic\": \"everblu/cyble/index\","
     "\"device_class\": \"water\","
     "\"state_class\": \"total_increasing\","
     "\"unique_id\": \"everblu_cyble_index\","
@@ -92,24 +109,40 @@ constexpr const char *currentIndexConfigPayload =
 constexpr const char *batteryConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Battery\","
-    "\"unique_id\": \"water_meter_battery\","
+    "\"unique_id\": \"everblu_cyble_battery\","
     "\"state_topic\": \"everblu/cyble/battery\","
     "\"unit_of_measurement\": \"months\","
     "\"icon\": \"mdi:battery\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
-// JSON payload for water meter counter sensor
-constexpr const char *numReadingsConfigPayload =
+// The meter's own count of how many times it has been interrogated. Diagnostic
+// rather than primary: nobody wants it on a dashboard next to the water usage,
+// but it is the one value that distinguishes "the meter never heard us" from
+// "the meter answered and we failed to decode it".
+constexpr const char *readingsConfigPayload =
     "{"
-    "\"name\": \"Everblu Cyble Num Readings\","
-    "\"unique_id\": \"water_meter_readings\","
-    "\"state_topic\": \"everblu/cyble/num_readings\","
+    "\"name\": \"Everblu Cyble Readings\","
+    "\"unique_id\": \"everblu_cyble_readings\","
+    "\"state_topic\": \"everblu/cyble/readings\","
+    "\"entity_category\": \"diagnostic\","
     "\"icon\": \"mdi:counter\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// When the meter last actually answered. The reader is a once-a-day device, so
+// a fault is invisible in the index itself — that just stops changing, which is
+// also what a closed tap looks like. This is what an automation can alert on.
+constexpr const char *lastReadConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Last Read\","
+    "\"unique_id\": \"everblu_cyble_last_read\","
+    "\"state_topic\": \"everblu/cyble/last_read\","
+    "\"device_class\": \"timestamp\","
+    "\"entity_category\": \"diagnostic\","
+    "\"icon\": \"mdi:clock-check-outline\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // What the reader is currently doing, so a manual trigger gives visible feedback
 constexpr const char *statusConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Status\","
-    "\"unique_id\": \"water_meter_status\","
+    "\"unique_id\": \"everblu_cyble_status\","
     "\"state_topic\": \"everblu/cyble/status\","
     "\"icon\": \"mdi:information-outline\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
@@ -119,7 +152,7 @@ constexpr const char *statusConfigPayload =
 constexpr const char *scheduleTimeConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Reading Time\","
-    "\"unique_id\": \"water_meter_time\","
+    "\"unique_id\": \"everblu_cyble_reading_time\","
     "\"command_topic\": \"everblu/cyble/schedule/time/set\","
     "\"state_topic\": \"everblu/cyble/schedule/time\","
     "\"pattern\": \"^([01][0-9]|2[0-3]):[0-5][0-9]$\","
@@ -131,7 +164,7 @@ constexpr const char *scheduleTimeConfigPayload =
 constexpr const char *buttonReadConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Read Now\","
-    "\"unique_id\": \"water_meter_read_now\","
+    "\"unique_id\": \"everblu_cyble_read_now\","
     "\"command_topic\": \"everblu/cyble/command/read\","
     "\"icon\": \"mdi:refresh\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
@@ -142,7 +175,7 @@ constexpr const char *buttonReadConfigPayload =
 constexpr const char *wiringConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble CC1101 Wiring\","
-    "\"unique_id\": \"water_meter_wiring\","
+    "\"unique_id\": \"everblu_cyble_wiring\","
     "\"state_topic\": \"everblu/cyble/wiring\","
     "\"json_attributes_topic\": \"everblu/cyble/wiring/attributes\","
     "\"entity_category\": \"diagnostic\","
@@ -153,17 +186,17 @@ constexpr const char *wiringConfigPayload =
 constexpr const char *buttonWiringConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Check Wiring\","
-    "\"unique_id\": \"water_meter_check_wiring\","
+    "\"unique_id\": \"everblu_cyble_check_wiring\","
     "\"command_topic\": \"everblu/cyble/command/wiring\","
     "\"entity_category\": \"diagnostic\","
     "\"icon\": \"mdi:cable-data\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // Forget the stored frequency and sweep for it again
-constexpr const char *buttonScanConfigPayload =
+constexpr const char *buttonSweepConfigPayload =
     "{"
-    "\"name\": \"Everblu Cyble Full Scan\","
-    "\"unique_id\": \"water_meter_full_scan\","
-    "\"command_topic\": \"everblu/cyble/command/scan\","
+    "\"name\": \"Everblu Cyble Full Sweep\","
+    "\"unique_id\": \"everblu_cyble_full_sweep\","
+    "\"command_topic\": \"everblu/cyble/command/sweep\","
     "\"entity_category\": \"config\","
     "\"icon\": \"mdi:radar\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 

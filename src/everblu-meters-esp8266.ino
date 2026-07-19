@@ -90,6 +90,32 @@ void publishScheduledTime()
 }
 
 /**
+ * @brief Publish when the meter last answered, as ISO 8601.
+ *
+ * Published in UTC with a trailing Z rather than in local time: Home Assistant
+ * parses a timestamp entity strictly, and a local time with no offset would be
+ * silently misread by however far the device's timezone is from UTC.
+ */
+void publishLastRead()
+{
+  time_t lastRead = cyble.lastReadAt();
+  // Nothing has ever been read — on first boot, or after the schedule record
+  // was reset. "unknown" is the value Home Assistant expects for a timestamp
+  // that does not exist; publishing the epoch would claim a 1970 reading.
+  if (lastRead == 0)
+  {
+    mqtt.publish(lastReadStateTopic, "unknown", true);
+    return;
+  }
+
+  struct tm utc;
+  gmtime_r(&lastRead, &utc);
+  char formatted[32];
+  strftime(formatted, sizeof(formatted), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  mqtt.publish(lastReadStateTopic, formatted, true);
+}
+
+/**
  * @brief Publish the wiring verdict and the chip identity behind it.
  *
  * The check itself runs at boot, long before MQTT exists, so the verdict is
@@ -130,10 +156,11 @@ void publishResult(MeterReadResult result)
   {
   case METER_READ_OK:
     digitalWrite(LED_BUILTIN, LOW); // turned on
-    mqtt.publish(litersStateTopic, String(cyble.current_index), true);
-    mqtt.publish(batteryStateTopic, String(cyble.battery_lifetime), true);
-    mqtt.publish(counterStateTopic, String(cyble.num_of_readings), true);
+    mqtt.publish(indexStateTopic, String(cyble.currentIndex), true);
+    mqtt.publish(batteryStateTopic, String(cyble.batteryLifetime), true);
+    mqtt.publish(readingsStateTopic, String(cyble.numReadings), true);
     mqtt.publish(statusStateTopic, "ok", true);
+    publishLastRead();
     break;
 
   case METER_ASLEEP:
@@ -174,7 +201,7 @@ void readNow()
 /**
  * @brief Forget the stored frequency and sweep the whole band for it.
  */
-void scanNow()
+void sweepNow()
 {
   if (!cbtime_set)
   {
@@ -185,7 +212,7 @@ void scanNow()
 
   mqtt.publish(statusStateTopic, "sweeping", true);
   cyble.forgetMeter();
-  publishResult(cyble.scanForMeter(time(nullptr)));
+  publishResult(cyble.sweepForMeter(time(nullptr)));
 }
 
 /**
@@ -208,8 +235,17 @@ void onScheduleTick()
 
   // Stay quiet on the ticks where nothing was due, so the status topic reflects
   // real attempts rather than flapping every minute.
-  if (performed)
-    publishResult(result);
+  if (!performed)
+    return;
+
+  publishResult(result);
+
+  // Distinguish "still trying" from "stopped trying", which the status above
+  // cannot: a failed read publishes no_response whether or not more attempts
+  // are coming. Only on the tick that spends the last one, so this stays a
+  // single transition rather than a value republished all afternoon.
+  if (result != METER_READ_OK && cyble.attemptsToday() >= cyble.maxAttemptsPerDay())
+    mqtt.publish(statusStateTopic, "gave_up", true);
 }
 
 void onConnectionEstablished()
@@ -239,19 +275,21 @@ void onConnectionEstablished()
 
   Serial.println("> Send MQTT config for HA.");
   // Publish the discovery configuration messages
-  mqtt.publish(indexConfigTopic, currentIndexConfigPayload, true);
+  mqtt.publish(indexConfigTopic, indexConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(batteryConfigTopic, batteryConfigPayload, true);
   delay(50); // Do not remove
-  mqtt.publish(counterConfigTopic, numReadingsConfigPayload, true);
+  mqtt.publish(readingsConfigTopic, readingsConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(statusConfigTopic, statusConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(lastReadConfigTopic, lastReadConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(scheduleTimeConfigTopic, scheduleTimeConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(buttonReadConfigTopic, buttonReadConfigPayload, true);
   delay(50); // Do not remove
-  mqtt.publish(buttonScanConfigTopic, buttonScanConfigPayload, true);
+  mqtt.publish(buttonSweepConfigTopic, buttonSweepConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(wiringConfigTopic, wiringConfigPayload, true);
   delay(50); // Do not remove
@@ -264,6 +302,10 @@ void onConnectionEstablished()
   // The verdict from boot. Published on every reconnect rather than once, so a
   // broker restart does not leave the entity blank until the next power cycle.
   publishWiring();
+  // Survives a reboot in EEPROM, so this is meaningful even on the first
+  // connect after a power cycle — and that is exactly when someone is asking
+  // whether the reader has worked recently.
+  publishLastRead();
 
   mqtt.subscribe(scheduleTimeSetTopic, [](const String &message) {
     uint8_t hour = 0;
@@ -278,9 +320,9 @@ void onConnectionEstablished()
   });
 
   mqtt.subscribe(commandReadTopic, [](const String &message) { readNow(); });
-  mqtt.subscribe(commandScanTopic, [](const String &message) { scanNow(); });
+  mqtt.subscribe(commandSweepTopic, [](const String &message) { sweepNow(); });
 
-  // Unlike read and scan, this transmits nothing and takes milliseconds, so it
+  // Unlike read and sweep, this transmits nothing and takes milliseconds, so it
   // needs neither a clock nor a wakeup-window check.
   mqtt.subscribe(commandWiringTopic, [](const String &message) {
     cyble.checkWiring();

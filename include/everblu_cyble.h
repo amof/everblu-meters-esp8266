@@ -69,7 +69,7 @@ public:
      * This is the "first use" path, and the recovery path if the meter is
      * replaced. Costs minutes of transmission, so it is never automatic.
      */
-    MeterReadResult scanForMeter(time_t now);
+    MeterReadResult sweepForMeter(time_t now);
     /**
      * @brief Read if the scheduled time has passed and today has not been read.
      *
@@ -86,6 +86,10 @@ public:
     MeterReadResult readIfDue(time_t now, bool *performed);
     /** Failed attempts made on the current local day. */
     uint8_t attemptsToday() const { return _attemptsToday; }
+    /** Attempts allowed per day before the reader waits for tomorrow. */
+    uint8_t maxAttemptsPerDay() const;
+    /** When the last successful read completed, 0 if there has never been one. */
+    time_t lastReadAt() const { return _schedule.lastReadAt; }
     /**
      * @brief Whether the meter is expected to answer at the given time.
      *
@@ -137,11 +141,16 @@ public:
      */
     void setBetweenAttemptsCallback(void (*callback)(void)) { _betweenAttempts = callback; }
 
-    uint32_t current_index;   // Current meter index in liter
-    uint8_t num_of_readings;  // Number of time meter has been read
-    uint8_t battery_lifetime; // Remaining battery life in months
-    uint8_t wakeup_start;     // Meter wakeup time
-    uint8_t wakeup_stop;      // Meter sleep time
+    // Decoded from the most recent meter response. Zeroed before every
+    // interrogation, so these describe the last exchange, not the last success.
+    uint32_t currentIndex;   // Cumulative consumption in litres
+    uint8_t numReadings;     // Times the meter reports having been read
+    uint8_t batteryLifetime; // Remaining battery life in months
+    // The window as the meter just reported it. MeterProfile carries fields of
+    // the same name holding the window as last persisted; these are the fresh
+    // reading, and saveProfile() is what copies one into the other.
+    uint8_t wakeupStart;     // Hour the meter starts answering
+    uint8_t wakeupStop;      // Hour the meter stops answering
 
 private:
     uint8_t _year;
@@ -172,7 +181,7 @@ private:
     void warnIfWiringFailed() const;
 
     MeterReadResult readMeterInternal(time_t now);
-    MeterReadResult scanForMeterInternal(time_t now);
+    MeterReadResult sweepForMeterInternal(time_t now);
 
     // Persistence
     bool loadProfile();

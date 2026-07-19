@@ -145,8 +145,8 @@ void EverbluCyble::saveProfile(float frequency)
     _profile.schema = EEPROM_SCHEMA;
     _profile.frequency = frequency;
     // The meter reports its own wakeup window; prefer it over our default.
-    _profile.wakeupStart = wakeup_start;
-    _profile.wakeupStop = wakeup_stop;
+    _profile.wakeupStart = wakeupStart;
+    _profile.wakeupStop = wakeupStop;
 
     EEPROM.put(EEPROM_PROFILE_ADDR, _profile);
     EEPROM.commit();
@@ -212,6 +212,11 @@ bool EverbluCyble::alreadyReadToday(time_t now) const
         return false;
 
     return sameLocalDay(_schedule.lastReadAt, now);
+}
+
+uint8_t EverbluCyble::maxAttemptsPerDay() const
+{
+    return MAX_READ_ATTEMPTS_PER_DAY;
 }
 
 void EverbluCyble::rollAttemptBudget(time_t now)
@@ -346,7 +351,7 @@ MeterReadResult EverbluCyble::readMeter(time_t now)
     return result;
 }
 
-MeterReadResult EverbluCyble::scanForMeter(time_t now)
+MeterReadResult EverbluCyble::sweepForMeter(time_t now)
 {
     if (_busy)
     {
@@ -357,7 +362,7 @@ MeterReadResult EverbluCyble::scanForMeter(time_t now)
     warnIfWiringFailed();
 
     _busy = true;
-    MeterReadResult result = scanForMeterInternal(now);
+    MeterReadResult result = sweepForMeterInternal(now);
     _busy = false;
 
     return result;
@@ -406,7 +411,7 @@ MeterReadResult EverbluCyble::readMeterInternal(time_t now)
     return METER_NO_RESPONSE;
 }
 
-MeterReadResult EverbluCyble::scanForMeterInternal(time_t now)
+MeterReadResult EverbluCyble::sweepForMeterInternal(time_t now)
 {
     float found = 0.0f;
 
@@ -438,7 +443,7 @@ void EverbluCyble::recordSuccessfulRead(time_t now)
 bool EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz)
 {
     // Walk outwards from the centre so the common case (little crystal error)
-    // terminates after a handful of attempts instead of scanning the whole band.
+    // terminates after a handful of attempts instead of sweeping the whole band.
     for (uint16_t step = 0; step <= maxSteps; step++)
     {
         for (int8_t direction = 1; direction >= -1; direction -= 2)
@@ -482,14 +487,14 @@ bool EverbluCyble::decodeBufferReceived(const uint8_t *decoded_buffer, uint8_t s
     if (size <= INDEX_NUM_OF_READINGS)
         return false;
 
-    current_index = (uint32_t)decoded_buffer[INDEX_CURRENT_INDEX] |
+    currentIndex = (uint32_t)decoded_buffer[INDEX_CURRENT_INDEX] |
                     ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 1] << 8) |
                     ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 2] << 16) |
                     ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 3] << 24);
-    num_of_readings = decoded_buffer[INDEX_NUM_OF_READINGS];
-    battery_lifetime = decoded_buffer[INDEX_BATTERY_LIFE_TIME];
-    wakeup_start = decoded_buffer[INDEX_WAKEUP_START];
-    wakeup_stop = decoded_buffer[INDEX_WAKEUP_STOP];
+    numReadings = decoded_buffer[INDEX_NUM_OF_READINGS];
+    batteryLifetime = decoded_buffer[INDEX_BATTERY_LIFE_TIME];
+    wakeupStart = decoded_buffer[INDEX_WAKEUP_START];
+    wakeupStop = decoded_buffer[INDEX_WAKEUP_STOP];
 
     return true;
 }
@@ -636,11 +641,11 @@ bool EverbluCyble::wait_meter_response()
     if (success)
     {
         LOG("[Everblu] Data received:\n");
-        LOG("Current meter index (liters): %u\n", current_index);
-        LOG("Number of meter readings: %u\n", num_of_readings);
-        LOG("Battery life remaining (months): %u\n", battery_lifetime);
-        LOG("Meter wakeup time: %u\n", wakeup_start);
-        LOG("Meter sleep time: %u\n", wakeup_stop);
+        LOG("Current meter index (litres): %u\n", currentIndex);
+        LOG("Number of meter readings: %u\n", numReadings);
+        LOG("Battery life remaining (months): %u\n", batteryLifetime);
+        LOG("Meter wakeup time: %u\n", wakeupStart);
+        LOG("Meter sleep time: %u\n", wakeupStop);
     }
     else
     {
@@ -683,7 +688,7 @@ uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t expectedFrameByt
     }
 
     // Restore on every path: a half-configured modem (9.59kbps, 0xFFF0 sync,
-    // infinite length) would otherwise poison the next frequency in the scan.
+    // infinite length) would otherwise poison the next frequency in the sweep.
     restoreDefaultSettings();
 
     return totalBytesReceived;
@@ -691,11 +696,11 @@ uint32_t EverbluCyble::receiveData(uint32_t timeoutMs, uint32_t expectedFrameByt
 
 void EverbluCyble::resetData()
 {
-    current_index = 0;
-    num_of_readings = 0;
-    battery_lifetime = 0;
-    wakeup_start = 0;
-    wakeup_stop = 0;
+    currentIndex = 0;
+    numReadings = 0;
+    batteryLifetime = 0;
+    wakeupStart = 0;
+    wakeupStop = 0;
 }
 
 bool EverbluCyble::longWakeupPreamble(uint8_t chunksToSend)

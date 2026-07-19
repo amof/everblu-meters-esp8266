@@ -80,7 +80,7 @@ fine.
 
 > [!IMPORTANT]
 > **Fit the antenna before powering up.** A quarter wave at 433 MHz is ~17.3 cm
-> of wire. Without one, range is centimetres and the frequency scan silently
+> of wire. Without one, range is centimetres and the frequency sweep silently
 > finds nothing — which looks exactly like a software bug.
 
 <details>
@@ -191,9 +191,9 @@ The reader does not yet know which frequency reaches your meter, so it must
 search for it once:
 
 1. Wait for the device to connect to WiFi and MQTT, and for NTP to set the clock.
-2. Press **Full Scan** in Home Assistant, during the meter's waking hours
+2. Press **Full Sweep** in Home Assistant, during the meter's waking hours
    (Mon–Sat, 06:00–18:00).
-3. The scan takes minutes of continuous transmission. The frequency it finds is
+3. The sweep takes minutes of continuous transmission. The frequency it finds is
    saved to EEPROM and reused from then on.
 
 From then on the meter is read **once a day at 12:00 local time** by default.
@@ -206,11 +206,34 @@ Entities appear automatically under one *Everblu Cyble* device:
 | --- | --- | --- |
 | Reading Time | `everblu/cyble/schedule/time/set` | Daily reading time as `HH:MM`. Persisted. |
 | Read Now | `everblu/cyble/command/read` | Read immediately on the known frequency. |
-| Full Scan | `everblu/cyble/command/scan` | Forget the frequency and search again. |
-| Status | `everblu/cyble/status` | `ok`, `reading`, `sweeping`, `asleep`, `no_response`, `not_provisioned`, `no_clock` |
+| Full Sweep | `everblu/cyble/command/sweep` | Forget the frequency and search again. |
+| Check Wiring | `everblu/cyble/command/wiring` | Re-run the wiring check without a reboot. |
+| Status | `everblu/cyble/status` | See below |
+| Last Read | `everblu/cyble/last_read` | When the meter last answered, ISO 8601 UTC. |
+| CC1101 Wiring | `everblu/cyble/wiring` | `ok`, `spi_failed`, `gdo0_failed` |
 
-Readings are published retained on `everblu/cyble/liters`, `.../battery` and
-`.../num_readings`.
+Readings are published retained on `everblu/cyble/index`, `.../battery` and
+`.../readings`.
+
+Status is one of:
+
+| Value | Meaning |
+| --- | --- |
+| `ok` | A read completed and the values above were updated. |
+| `reading` | A read is in flight. |
+| `sweeping` | A full frequency sweep is in flight. |
+| `busy` | A request arrived while the radio was already in use. |
+| `asleep` | Asked to read outside the meter's wakeup window. |
+| `no_response` | The meter did not answer on any frequency tried. |
+| `not_provisioned` | As above, and no frequency has ever been found. |
+| `gave_up` | The day's attempt budget is spent; waiting for tomorrow. |
+| `no_clock` | Asked to transmit before NTP had set the clock. |
+
+The scheduled read is attempted at most **5 times a day**. Each failure costs a
+full sweep of transmission, so rather than retrying until the wakeup window
+shuts, the reader gives up and waits for the next day. **Last Read** is what
+tells you whether it is still working — the index alone cannot, since a stalled
+index looks exactly like a closed tap.
 
 Every entity is tied to `everblu/cyble/availability`, so they grey out when the
 device stops answering — including while it reboots into a new image, and
