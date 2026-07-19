@@ -112,6 +112,17 @@ public:
     bool isProvisioned() const { return _provisioned; }
 
     /**
+     * Verdict of the wiring check run at init(), and the chip identity behind
+     * it. A third axis alongside availability and status: a reader that fails
+     * this is still available, still reports whatever its last interrogation
+     * concluded, and is still allowed to try again.
+     */
+    WiringCheckResult wiringResult() const { return _wiring; }
+    ChipIdentity chipIdentity() const { return _cc1101->identity(); }
+    /** Re-run the wiring check, e.g. after re-seating a wire. */
+    WiringCheckResult checkWiring();
+
+    /**
      * @brief Called between frequency attempts during a sweep.
      *
      * A sweep blocks for minutes, which is long enough for the MQTT keepalive
@@ -132,11 +143,22 @@ private:
     MeterProfile _profile;
     ReaderSchedule _schedule;
     bool _provisioned;
+    WiringCheckResult _wiring;
     // Guards the radio against re-entry. The between-attempts callback services
     // MQTT, which can dispatch a command that calls straight back in here.
     bool _busy;
     CC1101 *_cc1101;
     void (*_betweenAttempts)(void);
+
+    /**
+     * @brief Log a warning if the wiring check is failing, at the top of every
+     *        interrogation.
+     *
+     * Nothing is prevented — see ADR-0005. This exists so the "no_response"
+     * that almost certainly follows is attributed to the reader's own wiring
+     * rather than to the meter, at the moment someone is looking.
+     */
+    void warnIfWiringFailed() const;
 
     MeterReadResult readMeterInternal(time_t now);
     MeterReadResult scanForMeterInternal(time_t now);

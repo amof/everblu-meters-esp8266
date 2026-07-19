@@ -84,6 +84,38 @@ void publishScheduledTime()
 }
 
 /**
+ * @brief Publish the wiring verdict and the chip identity behind it.
+ *
+ * The check itself runs at boot, long before MQTT exists, so the verdict is
+ * held on the reader and published from here — on every connect, and again
+ * whenever the check is re-run by hand.
+ */
+void publishWiring()
+{
+  const char *verdict = "ok";
+  switch (cyble.wiringResult())
+  {
+  case WIRING_OK:
+    verdict = "ok";
+    break;
+  case WIRING_SPI_FAILED:
+    verdict = "spi_failed";
+    break;
+  case WIRING_GDO0_FAILED:
+    verdict = "gdo0_failed";
+    break;
+  }
+  mqtt.publish(wiringStateTopic, verdict, true);
+
+  ChipIdentity id = cyble.chipIdentity();
+  char attributes[64];
+  snprintf(attributes, sizeof(attributes),
+           "{\"partnum\": \"0x%02X\", \"version\": \"0x%02X\"}",
+           id.partNumber, id.version);
+  mqtt.publish(wiringAttributesTopic, attributes, true);
+}
+
+/**
  * @brief Publish the outcome of a read attempt.
  */
 void publishResult(MeterReadResult result)
@@ -211,10 +243,17 @@ void onConnectionEstablished()
   delay(50); // Do not remove
   mqtt.publish(buttonScanConfigTopic, buttonScanConfigPayload, true);
   delay(50); // Do not remove
+  mqtt.publish(wiringConfigTopic, wiringConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(buttonWiringConfigTopic, buttonWiringConfigPayload, true);
+  delay(50); // Do not remove
 
   // Reflect the stored schedule so the Home Assistant entity shows the value
   // actually in force rather than an empty state.
   publishScheduledTime();
+  // The verdict from boot. Published on every reconnect rather than once, so a
+  // broker restart does not leave the entity blank until the next power cycle.
+  publishWiring();
 
   mqtt.subscribe(scheduleTimeSetTopic, [](const String &message) {
     uint8_t hour = 0;
@@ -230,6 +269,13 @@ void onConnectionEstablished()
 
   mqtt.subscribe(commandReadTopic, [](const String &message) { readNow(); });
   mqtt.subscribe(commandScanTopic, [](const String &message) { scanNow(); });
+
+  // Unlike read and scan, this transmits nothing and takes milliseconds, so it
+  // needs neither a clock nor a wakeup-window check.
+  mqtt.subscribe(commandWiringTopic, [](const String &message) {
+    cyble.checkWiring();
+    publishWiring();
+  });
 
   // Start the schedule once and only once. onConnectionEstablished() fires on
   // every MQTT reconnection, and a read can cost minutes of transmission, so

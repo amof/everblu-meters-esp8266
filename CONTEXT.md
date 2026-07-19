@@ -113,6 +113,24 @@ the one it is performing, so an interrogation that falls back to a full sweep
 still reports itself as reading.
 _Avoid_: state, availability
 
+**Wiring check**:
+Proving that the transceiver is physically connected and correctly mapped,
+without transmitting anything. It confirms that the SPI wires reach the chip,
+and that GDO0 reaches the pin the reader believes it does — by having the chip
+drive GDO0 to a constant level and reading that level back. It says nothing
+about the crystal, the antenna, or whether any meter can be reached; only a
+completed interrogation shows that. A third axis alongside availability and
+status: a reader whose wiring check fails is still available, and still reports
+whatever its last interrogation concluded.
+_Avoid_: test mode, self-test, diagnostic
+
+**Chip identity**:
+The part number and version the transceiver reports about itself. Evidence for
+a wiring check rather than a fact of interest on its own: the expected pair
+means SPI is reaching the chip, and an all-ones pair means it is not. Never
+called a version bare, which in this project belongs to the firmware.
+_Avoid_: chip version, CC1101 version
+
 **Parking the radio**:
 Returning the transceiver to idle and discarding whatever it was sending or
 receiving. Necessary before anything that restarts the reader, because the

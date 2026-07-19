@@ -36,7 +36,9 @@ void CC1101::init(void)
   spiConfigure(0, SPI_SPEED);
   reset();
 
-  version();
+  // The identity is not read here: checkWiring() reads it and judges it, and
+  // the caller runs that immediately after. Reading it twice would only put
+  // two copies of the same two bytes in the log.
 }
 
 void CC1101::setFrequency(float freq)
@@ -81,17 +83,59 @@ void CC1101::printRegistersSettings(void)
   delay(1);
 }
 
-void CC1101::version(void)
+ChipIdentity CC1101::readIdentity(void)
 {
-  // Read the register values
-  uint8_t partNumber = halRfReadReg(PARTNUM_ADDR);
-  uint8_t version = halRfReadReg(VERSION_ADDR);
+  _identity.partNumber = halRfReadReg(PARTNUM_ADDR);
+  _identity.version = halRfReadReg(VERSION_ADDR);
 
-  // Print the values. A part number of 0x00 with a version of 0x14 is the
-  // expected answer; 0x00/0xFF or 0xFF/0xFF means SPI is not reaching the chip.
-  LOG("[CC1101] Partnumber: 0x%02X\n", partNumber);
-  LOG("[CC1101] Version: 0x%02X\n", version);
+  // A part number of 0x00 with a version of 0x14 is the expected answer;
+  // 0x00/0xFF or 0xFF/0xFF means SPI is not reaching the chip.
+  LOG("[CC1101] Partnumber: 0x%02X\n", _identity.partNumber);
+  LOG("[CC1101] Version: 0x%02X\n", _identity.version);
   delay(1);
+
+  return _identity;
+}
+
+WiringCheckResult CC1101::checkWiring(void)
+{
+  readIdentity();
+
+  if (_identity.partNumber != CC1101_EXPECTED_PARTNUM ||
+      _identity.version != CC1101_EXPECTED_VERSION)
+  {
+    LOG("[Wiring] SPI does not reach the chip, check MOSI/MISO/SCK/CSn\n");
+    return WIRING_SPI_FAILED;
+  }
+
+  // Drive GDO0 low from the chip and read it back. This is the load-bearing
+  // half: the pin is INPUT_PULLUP, so a wire that is missing, on the wrong pin
+  // or broken reads high here.
+  halRfWriteReg(IOCFG0, IOCFG_GDO_HW_TO_0);
+  delay(1);
+  bool lowSeen = (digitalRead(_gdo_pin) == LOW);
+
+  // Then the inverse, which is what catches a pin shorted to ground. Without
+  // it a permanently-low pin would pass the test above and look perfect.
+  halRfWriteReg(IOCFG0, IOCFG_GDO_HW_TO_0 | IOCFG_GDO_INV);
+  delay(1);
+  bool highSeen = (digitalRead(_gdo_pin) == HIGH);
+
+  // Restored before returning on either path. Leaving IOCFG0 on a constant
+  // level would break every subsequent interrogation by way of the diagnostic
+  // meant to protect them — waitForGdo0Assert() would wait forever, or return
+  // instantly, and the meter would be blamed.
+  halRfWriteReg(IOCFG0, IOCFG_GDO0_SYNC);
+
+  if (!lowSeen || !highSeen)
+  {
+    LOG("[Wiring] GDO0 did not follow the chip (low %s, high %s), check the GDO0 wire\n",
+        lowSeen ? "ok" : "FAIL", highSeen ? "ok" : "FAIL");
+    return WIRING_GDO0_FAILED;
+  }
+
+  LOG("[Wiring] SPI and GDO0 ok\n");
+  return WIRING_OK;
 }
 
 bool CC1101::waitForGdo0Assert(uint32_t timeoutMs)
@@ -442,7 +486,7 @@ void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
 void CC1101::configureRF_0(float freq)
 {
   halRfWriteReg(IOCFG2, 0x0D);  // GDO2 Output Pin Configuration : Serial Data Output
-  halRfWriteReg(IOCFG0, 0x06);  // GDO0 Output Pin Configuration : Asserts when sync word has been sent / received, and de-asserts at the end of the packet.
+  halRfWriteReg(IOCFG0, IOCFG_GDO0_SYNC); // GDO0 Output Pin Configuration : Asserts when sync word has been sent / received, and de-asserts at the end of the packet.
   halRfWriteReg(FIFOTHR, 0x47); // 0x4? adc with bandwith< 325khz
   halRfWriteReg(SYNC1, 0x55);   // 01010101
   halRfWriteReg(SYNC0, 0x00);   // 00000000

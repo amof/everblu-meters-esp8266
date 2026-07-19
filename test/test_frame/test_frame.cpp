@@ -6,9 +6,14 @@
 #include <unity.h>
 #include <string.h>
 #include <Arduino.h>
+#include <SPI.h>
 #include <utils.h>
 
 FakeSerial Serial;
+// Nothing here touches SPI, but cc1101.cpp is linked into every test binary in
+// this environment and refers to the instance. Defining it costs a line and
+// keeps the source filter uniform across test directories.
+FakeSPI SPI;
 
 // The wiki's worked example: serial 16-0123456.
 // 13 10 00 45 10 01 E2 40 00 45 67 89 AB CD 00 0A 40 | DA DC

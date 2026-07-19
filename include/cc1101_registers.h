@@ -62,6 +62,25 @@
 #define TEST0 0x2E        // Various test settings
 
 /**
+ * IOCFG0 settings used by this driver (datasheet Table 41)
+ */
+// GDO0 asserts when the sync word is sent/received, de-asserts at end of packet.
+// This is the operating value; anything that changes IOCFG0 must restore it.
+#define IOCFG_GDO0_SYNC 0x06
+// GDO_CFG = 0x2F drives the pin to a constant level rather than reporting a
+// radio event. Used by the wiring check to exercise GDO0 without transmitting.
+#define IOCFG_GDO_HW_TO_0 0x2F
+// Bit 6 inverts the pin's output, so 0x2F|0x40 drives a constant high.
+#define IOCFG_GDO_INV 0x40
+
+/**
+ * Chip identity, as reported by PARTNUM and VERSION. A CC1101 answers 0x00 and
+ * 0x14; all-ones on either means SPI is not reaching the chip at all.
+ */
+#define CC1101_EXPECTED_PARTNUM 0x00
+#define CC1101_EXPECTED_VERSION 0x14
+
+/**
  * Status registers
  */
 #define PARTNUM_ADDR 0xF0    // Part number

@@ -21,7 +21,8 @@ nothing. We assert three things instead:
 2. **Invariants over the trace.** The FIFO is loaded before `STX`; TXBYTES never
    reaches zero between `STX` and the last request byte; no write can carry the
    FIFO past 64 bytes; `SFTX`/`SFRX` are issued only from IDLE, underflow or
-   overflow; `MDMCFG2` and `PKTCTRL0` are restored whichever step fails.
+   overflow; `MDMCFG2`, `PKTCTRL0` and `IOCFG0` are restored whichever step
+   fails.
 3. **Protocol vectors.** The frames published on the Maison Simon wiki, archived
    under `docs/cyble/`, pin frame construction to ground truth independent of
    either codebase.
@@ -42,15 +43,23 @@ be worse than none, because it would be believed.
 
 ## Consequences
 
-The tests compile the real, unmodified `cc1101.cpp` and `everblu_cyble.cpp`
-against fake `Arduino.h`/`SPI.h` primitives, with a stateful CC1101 model behind
-them. Nothing is made virtual and no seam is introduced for the tests' benefit:
-for a radio driver the correctness *is* the exact register values and strobe
-order, so the thing under test must be the thing that gets flashed.
+The tests are to compile the real, unmodified `cc1101.cpp` and
+`everblu_cyble.cpp` against fake `Arduino.h`/`SPI.h` primitives, with a stateful
+CC1101 model behind them. Nothing is made virtual and no seam is introduced for
+the tests' benefit: for a radio driver the correctness *is* the exact register
+values and strobe order, so the thing under test must be the thing that gets
+flashed.
 
-The model must track FIFO occupancy and the IDLE→TX→TXFIFO_UNDERFLOW transition.
-A model that merely answers status reads plausibly would let the underflow bug in
-ADR-0001 pass green, which is the one failure this suite exists to prevent.
+Only part of that exists. Tier 3 is built, and `cc1101.cpp` is compiled natively
+against a chip model that covers the register file, the identity registers and
+how GDO0 follows IOCFG0 — enough for the wiring check of ADR-0005, which never
+leaves IDLE. `everblu_cyble.cpp` is not yet in the native build, and tiers 1 and
+2 remain unwritten.
+
+Completing them means the model must also track FIFO occupancy and the
+IDLE→TX→TXFIFO_UNDERFLOW transition. A model that merely answers status reads
+plausibly would let the underflow bug in ADR-0001 pass green, which is the one
+failure this suite exists to prevent.
 
 The TX-side invariants have been checked verbatim against the datasheet (§15.4
 for underflow and SFTX, §20 for overflow corrupting FIFO content, Table 42 for

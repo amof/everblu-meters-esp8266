@@ -76,6 +76,10 @@ EverbluCyble::EverbluCyble(uint8_t gdoPin, uint8_t year, uint32_t serial)
     _serial = serial;
     _provisioned = false;
     _busy = false;
+    // Optimistic until init() runs the check. Nothing consults this before
+    // then, and defaulting to a failure would make every pre-init log line
+    // claim a fault that has not been looked for yet.
+    _wiring = WIRING_OK;
     _betweenAttempts = NULL;
     memset(&_profile, 0, sizeof(_profile));
     memset(&_schedule, 0, sizeof(_schedule));
@@ -85,6 +89,12 @@ EverbluCyble::EverbluCyble(uint8_t gdoPin, uint8_t year, uint32_t serial)
 bool EverbluCyble::init()
 {
     _cc1101->init();
+
+    // Before anything else is attempted, and on every boot rather than only on
+    // an unprovisioned one: a wire that falls off later must not go unnoticed
+    // just because the reader was working the day it was assembled.
+    _wiring = _cc1101->checkWiring();
+
     EEPROM.begin(EEPROM_SIZE);
 
     loadSchedule();
@@ -256,6 +266,21 @@ bool EverbluCyble::isMeterAwake(time_t now) const
     return (local->tm_hour >= start) && (local->tm_hour < stop);
 }
 
+WiringCheckResult EverbluCyble::checkWiring()
+{
+    _wiring = _cc1101->checkWiring();
+    return _wiring;
+}
+
+void EverbluCyble::warnIfWiringFailed() const
+{
+    if (_wiring == WIRING_OK)
+        return;
+
+    LOG("[Everblu] Wiring check is failing (%s), a no_response below is probably the reader, not the meter\n",
+        _wiring == WIRING_SPI_FAILED ? "spi" : "gdo0");
+}
+
 MeterReadResult EverbluCyble::readMeter(time_t now)
 {
     if (_busy)
@@ -263,6 +288,8 @@ MeterReadResult EverbluCyble::readMeter(time_t now)
         LOG("[Everblu] Radio already busy, ignoring request\n");
         return METER_BUSY;
     }
+
+    warnIfWiringFailed();
 
     _busy = true;
     MeterReadResult result = readMeterInternal(now);
@@ -278,6 +305,8 @@ MeterReadResult EverbluCyble::scanForMeter(time_t now)
         LOG("[Everblu] Radio already busy, ignoring request\n");
         return METER_BUSY;
     }
+
+    warnIfWiringFailed();
 
     _busy = true;
     MeterReadResult result = scanForMeterInternal(now);

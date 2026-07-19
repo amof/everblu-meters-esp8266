@@ -16,6 +16,15 @@ constexpr const char *batteryStateTopic = "everblu/cyble/battery";
 constexpr const char *counterStateTopic = "everblu/cyble/num_readings";
 constexpr const char *statusStateTopic = "everblu/cyble/status";
 constexpr const char *scheduleTimeStateTopic = "everblu/cyble/schedule/time";
+// Verdict of the wiring check: "ok", "spi_failed" or "gdo0_failed". Separate
+// from status because the two have different lifetimes — status is the latest
+// event, wiring fitness is sticky. Writing one into the other would destroy the
+// last reading's outcome every time the check ran.
+constexpr const char *wiringStateTopic = "everblu/cyble/wiring";
+// PARTNUM/VERSION, as attributes of the entity above rather than an entity of
+// their own: their only real use is as the evidence behind a "spi_failed"
+// verdict, so they belong next to it.
+constexpr const char *wiringAttributesTopic = "everblu/cyble/wiring/attributes";
 // Debug log, one line per message. Not autodiscovered: it is far too chatty for
 // Home Assistant's recorder, and a state value is capped at 255 characters.
 // Follow it with: mosquitto_sub -t 'everblu/cyble/log' -v
@@ -39,6 +48,7 @@ constexpr const char *availabilityOffline = "offline";
 constexpr const char *scheduleTimeSetTopic = "everblu/cyble/schedule/time/set";
 constexpr const char *commandReadTopic = "everblu/cyble/command/read";
 constexpr const char *commandScanTopic = "everblu/cyble/command/scan";
+constexpr const char *commandWiringTopic = "everblu/cyble/command/wiring";
 
 // Discovery topics
 constexpr const char *indexConfigTopic = "homeassistant/sensor/everblucyble01a/index/config";
@@ -48,6 +58,8 @@ constexpr const char *statusConfigTopic = "homeassistant/sensor/everblucyble01a/
 constexpr const char *scheduleTimeConfigTopic = "homeassistant/text/everblucyble01a/time/config";
 constexpr const char *buttonReadConfigTopic = "homeassistant/button/everblucyble01a/read/config";
 constexpr const char *buttonScanConfigTopic = "homeassistant/button/everblucyble01a/scan/config";
+constexpr const char *wiringConfigTopic = "homeassistant/sensor/everblucyble01a/wiring/config";
+constexpr const char *buttonWiringConfigTopic = "homeassistant/button/everblucyble01a/wiring/config";
 
 // Availability is per-entity in Home Assistant, so every payload has to carry
 // this too — an entity without it is never greyed out, however dead the device.
@@ -122,6 +134,29 @@ constexpr const char *buttonReadConfigPayload =
     "\"unique_id\": \"water_meter_read_now\","
     "\"command_topic\": \"everblu/cyble/command/read\","
     "\"icon\": \"mdi:refresh\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// Whether the transceiver is wired up, as distinct from whether the radio
+// works. The chip is named here rather than in the glossary term because this
+// string is read in a list of unrelated entities, where "wiring" alone says
+// nothing about what to go and re-seat.
+constexpr const char *wiringConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble CC1101 Wiring\","
+    "\"unique_id\": \"water_meter_wiring\","
+    "\"state_topic\": \"everblu/cyble/wiring\","
+    "\"json_attributes_topic\": \"everblu/cyble/wiring/attributes\","
+    "\"entity_category\": \"diagnostic\","
+    "\"icon\": \"mdi:cable-data\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// Re-run the wiring check, for someone standing at the device with a
+// screwdriver who would rather not power-cycle it.
+constexpr const char *buttonWiringConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Check Wiring\","
+    "\"unique_id\": \"water_meter_check_wiring\","
+    "\"command_topic\": \"everblu/cyble/command/wiring\","
+    "\"entity_category\": \"diagnostic\","
+    "\"icon\": \"mdi:cable-data\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // Forget the stored frequency and sweep for it again
 constexpr const char *buttonScanConfigPayload =

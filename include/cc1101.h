@@ -1,6 +1,31 @@
 #ifndef __CC1101_H__
 #define __CC1101_H__
 
+/**
+ * What the transceiver reports about itself. Evidence behind a wiring verdict
+ * rather than a fact of interest on its own: the expected pair proves SPI is
+ * reaching the chip, all-ones proves it is not.
+ */
+struct ChipIdentity
+{
+  uint8_t partNumber;
+  uint8_t version;
+};
+
+/**
+ * Outcome of a wiring check.
+ *
+ * Ordered, not a set. With SPI dead the GDO0 test is meaningless — the pin
+ * would only be read through its own pull-up — so a SPI failure short-circuits
+ * and GDO0 is never claimed either way.
+ */
+enum WiringCheckResult
+{
+  WIRING_OK,          // SPI reaches the chip and GDO0 reaches the expected pin
+  WIRING_SPI_FAILED,  // PARTNUM/VERSION are not what a CC1101 answers
+  WIRING_GDO0_FAILED, // Chip is there, but driving GDO0 does not move the pin
+};
+
 class CC1101
 {
 public:
@@ -48,10 +73,33 @@ public:
    */
   void printRegistersSettings(void);
   /**
-   * @brief Print the version and part number of CC1101
+   * @brief Read and log the chip's part number and version.
    *
+   * Returns them rather than only logging, because the wiring check judges on
+   * these same two bytes and must not read them a second time.
    */
-  void version(void);
+  ChipIdentity readIdentity(void);
+  /**
+   * @brief Prove the transceiver is wired up, without transmitting anything.
+   *
+   * Checks that SPI reaches the chip, then that GDO0 reaches the pin this
+   * driver believes it does, by asking the chip to drive GDO0 to a constant
+   * level and reading the pin back. The chip stays in IDLE and the synthesiser
+   * never runs, so this is safe on a bench with no antenna attached and
+   * outside the meter's wakeup window.
+   *
+   * Both polarities are tested because the pin is INPUT_PULLUP: a disconnected
+   * GDO0 floats high, so only the drive-low step catches a missing wire, and
+   * only the drive-high step catches a pin shorted to ground.
+   *
+   * Proves nothing about the crystal, the PA or the antenna. Only a completed
+   * interrogation shows those.
+   *
+   * See docs/adr/0005-the-wiring-check-never-transmits-and-never-blocks.md
+   */
+  WiringCheckResult checkWiring(void);
+  /** Identity read by the last readIdentity() or checkWiring(). */
+  ChipIdentity identity(void) const { return _identity; }
   /**
    * @brief Block until GDO0 asserts, i.e. until the sync word is received.
    *
@@ -153,6 +201,7 @@ public:
 private:
   int _spi_speed = 0;
   uint8_t _gdo_pin = 0;
+  ChipIdentity _identity = {0, 0};
 
   // Internal
   /**
