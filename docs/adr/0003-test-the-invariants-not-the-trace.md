@@ -53,8 +53,17 @@ flashed.
 Only part of that exists. Tier 3 is built, and `cc1101.cpp` is compiled natively
 against a chip model that covers the register file, the identity registers and
 how GDO0 follows IOCFG0 — enough for the wiring check of ADR-0005, which never
-leaves IDLE. `everblu_cyble.cpp` is not yet in the native build, and tiers 1 and
-2 remain unwritten.
+leaves IDLE. Tiers 1 and 2 remain unwritten.
+
+`everblu_cyble.cpp` is in the native build, but only its scheduling logic is
+exercised: what `readIfDue()` decides *before* the radio is touched needs a
+clock and an EEPROM, not a FIFO model, so it was testable well ahead of the
+rest. Those tests are worth having early because the decision they cover is
+mostly invisible — its inputs are the day of the week and the hour, so a fault
+in it reproduces for a few hours a week and cannot be reproduced on demand at
+all. One shipped as exactly that: a tick outside the wakeup window was counted
+as a read attempt, so every Sunday logged and republished a refusal once a
+minute for thirteen hours.
 
 Completing them means the model must also track FIFO occupancy and the
 IDLE→TX→TXFIFO_UNDERFLOW transition. A model that merely answers status reads

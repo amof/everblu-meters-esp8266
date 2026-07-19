@@ -44,7 +44,13 @@ EverbluCyble cyble(
 
 // How often to check whether the scheduled reading time has arrived. The check
 // itself is date-based, so this only bounds how late a reading can start.
-#define SCHEDULE_TICK_MS (1000UL * 60)
+//
+// Five minutes rather than one, because the tick is also the retry interval: a
+// day that is due but unread is retried on every tick until it succeeds, and a
+// failing read costs a full frequency sweep of transmission each time. Starting
+// a daily reading up to five minutes late is worth far more than four extra
+// sweeps an hour into a meter that is not answering.
+#define SCHEDULE_TICK_MS (1000UL * 60 * 5)
 
 // Internal variables
 bool cbtime_set = false;

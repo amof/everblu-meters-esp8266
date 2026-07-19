@@ -76,10 +76,16 @@ public:
      * Call this periodically. It is date-based rather than a countdown, so a
      * reboot or a lost connection cannot silently skip or repeat a day.
      *
+     * Gives up for the day after a fixed number of failed attempts, so a meter
+     * that is not answering costs a bounded amount of transmission rather than
+     * a sweep every tick until the window closes.
+     *
      * @param now Current time
      * @param performed Set to true if a read was actually attempted
      */
     MeterReadResult readIfDue(time_t now, bool *performed);
+    /** Failed attempts made on the current local day. */
+    uint8_t attemptsToday() const { return _attemptsToday; }
     /**
      * @brief Whether the meter is expected to answer at the given time.
      *
@@ -144,6 +150,11 @@ private:
     ReaderSchedule _schedule;
     bool _provisioned;
     WiringCheckResult _wiring;
+    // Attempts are budgeted per day, and the budget lives in RAM rather than in
+    // the schedule record: persisting it would mean an EEPROM write per failed
+    // read, and a reboot is a legitimate reason to try again.
+    uint8_t _attemptsToday;
+    time_t _attemptsDay;
     // Guards the radio against re-entry. The between-attempts callback services
     // MQTT, which can dispatch a command that calls straight back in here.
     bool _busy;
@@ -171,6 +182,14 @@ private:
     void recordSuccessfulRead(time_t now);
     /** Whether a successful read has already happened on the given local day. */
     bool alreadyReadToday(time_t now) const;
+    /**
+     * @brief Roll the attempt budget over if the local day has changed.
+     *
+     * Called on the way into a scheduling decision rather than from a timer, so
+     * the budget resets correctly however long the device was asleep, offline
+     * or unpowered across the day boundary.
+     */
+    void rollAttemptBudget(time_t now);
 
     // Frequency search
     /**

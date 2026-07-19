@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+// The real Arduino.h drags in the C library, and the code under test relies on
+// that: everblu_cyble.cpp calls malloc/free without including <stdlib.h>. That
+// is the core's contract, not an accident to be worked around in src/.
+#include <stdlib.h>
 
 #include "fake_cc1101.h"
 

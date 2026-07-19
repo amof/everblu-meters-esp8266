@@ -53,6 +53,13 @@ const static uint16_t FREQ_STEPS_RECENTER = 3;
 #define SCHEDULE_SCHEMA 1
 #define DEFAULT_READING_HOUR 12 // Midday: comfortably inside the wakeup window
 
+// Failed automatic reads allowed per day before giving up until tomorrow. Each
+// one can cost a full frequency sweep, so this bounds a non-answering meter's
+// airtime instead of letting it retry for the rest of the wakeup window. A
+// manual read is never subject to it: someone standing at the device asking for
+// a reading has information the schedule does not.
+#define MAX_READ_ATTEMPTS_PER_DAY 5
+
 // The EEPROM records are raw struct images, so their sizes are part of the
 // on-flash format. Fail the build rather than silently misread stored data if a
 // toolchain change alters padding or the width of time_t.
@@ -80,6 +87,8 @@ EverbluCyble::EverbluCyble(uint8_t gdoPin, uint8_t year, uint32_t serial)
     // then, and defaulting to a failure would make every pre-init log line
     // claim a fault that has not been looked for yet.
     _wiring = WIRING_OK;
+    _attemptsToday = 0;
+    _attemptsDay = 0;
     _betweenAttempts = NULL;
     memset(&_profile, 0, sizeof(_profile));
     memset(&_schedule, 0, sizeof(_schedule));
@@ -188,15 +197,30 @@ bool EverbluCyble::setScheduledTime(uint8_t hour, uint8_t minute)
     return true;
 }
 
+/** Whether two instants fall on the same local calendar day. */
+static bool sameLocalDay(time_t a, time_t b)
+{
+    struct tm aTm = *localtime(&a);
+    struct tm bTm = *localtime(&b);
+
+    return (aTm.tm_year == bTm.tm_year) && (aTm.tm_yday == bTm.tm_yday);
+}
+
 bool EverbluCyble::alreadyReadToday(time_t now) const
 {
     if (_schedule.lastReadAt == 0)
         return false;
 
-    struct tm lastTm = *localtime(&_schedule.lastReadAt);
-    struct tm nowTm = *localtime(&now);
+    return sameLocalDay(_schedule.lastReadAt, now);
+}
 
-    return (lastTm.tm_year == nowTm.tm_year) && (lastTm.tm_yday == nowTm.tm_yday);
+void EverbluCyble::rollAttemptBudget(time_t now)
+{
+    if (_attemptsDay != 0 && sameLocalDay(_attemptsDay, now))
+        return;
+
+    _attemptsDay = now;
+    _attemptsToday = 0;
 }
 
 MeterReadResult EverbluCyble::readIfDue(time_t now, bool *performed)
@@ -216,8 +240,32 @@ MeterReadResult EverbluCyble::readIfDue(time_t now, bool *performed)
     if (nowMinutes < dueMinutes)
         return METER_READ_OK;
 
+    // A tick outside the wakeup window is not a failed attempt, it is a tick on
+    // which nothing was due. Letting it through would mark every minute of a
+    // Sunday, or of an evening, as an attempt: readMeter() would refuse anyway,
+    // but the caller would log and republish the refusal once a minute for the
+    // rest of the day. The read stays pending and fires when the window opens.
+    if (!isMeterAwake(now))
+        return METER_READ_OK;
+
+    rollAttemptBudget(now);
+    if (_attemptsToday >= MAX_READ_ATTEMPTS_PER_DAY)
+        return METER_READ_OK;
+
     *performed = true;
-    return readMeter(now);
+    MeterReadResult result = readMeter(now);
+
+    // METER_BUSY means the radio was already in use — a manual read or sweep
+    // running over the tick. Nothing was transmitted on this meter's behalf, so
+    // charging it to the budget would let an unrelated command exhaust the day.
+    if (result != METER_BUSY)
+    {
+        _attemptsToday++;
+        if (_attemptsToday >= MAX_READ_ATTEMPTS_PER_DAY)
+            LOG("[Everblu] %u failed attempts today, giving up until tomorrow\n", _attemptsToday);
+    }
+
+    return result;
 }
 
 void EverbluCyble::forgetMeter()
