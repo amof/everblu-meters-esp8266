@@ -146,7 +146,11 @@ void publishResult(MeterReadResult result)
     break;
 
   case METER_BUSY:
-    // Another read or sweep is already running; leave its status in place.
+    // The caller published "reading" or "sweeping" before getting here, so
+    // leaving the status alone would strand the entity on a transient value:
+    // the run that is actually in flight publishes its own outcome, not this
+    // one's. Say what happened to *this* request instead.
+    mqtt.publish(statusStateTopic, "busy", true);
     break;
   }
 }
