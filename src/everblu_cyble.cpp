@@ -600,6 +600,44 @@ bool EverbluCyble::wait_meter_ack()
     return isAck;
 }
 
+// THROWAWAY DIAGNOSTIC. Delete once the response layout is confirmed.
+//
+// Dumps the decoded meter response through LOG so it reaches MQTT. The
+// show_in_hex_* helpers in utils.cpp cannot be used: they print to Serial
+// directly, so nothing they emit ever leaves the device.
+//
+// Offsets are frame-absolute — the coordinate system INDEX_CURRENT_INDEX and
+// friends are written in. The tables in docs/cyble/images/meter_data*.jpg are
+// payload-relative and so read 15 lower throughout; the header line records
+// that base so the two are not confused. Those tables also claim the multi-byte
+// indexes are big endian, which is wrong: the code, and the tables' own worked
+// example, are little endian.
+static void dumpMeterResponse(const uint8_t *frame, uint8_t len)
+{
+    // Byte 0 is L, the frame's own total length. If it exceeds
+    // WATER_METER_RESPONSE_LEN then that constant is truncating every read.
+    LOG("[dump] L=0x%02X size=%u payload_base=15\n", len > 0 ? frame[0] : 0, len);
+
+    // 16 bytes is 48 characters, well inside the ~107 a log line has left once
+    // logPrintf has prefixed a timestamp. Longer lines are silently truncated.
+    char line[64];
+    // uint16_t, not uint8_t: len can reach 255, and offset += 16 would then
+    // wrap to 0 and loop forever.
+    for (uint16_t offset = 0; offset < len; offset += 16)
+    {
+        size_t used = 0;
+        for (uint8_t n = 0; n < 16 && (offset + n) < len; n++)
+        {
+            int written = snprintf(line + used, sizeof(line) - used,
+                                   "%02X ", frame[offset + n]);
+            if (written < 0 || (size_t)written >= sizeof(line) - used)
+                break;
+            used += written;
+        }
+        LOG("[dump] %03u: %s\n", offset, line);
+    }
+}
+
 bool EverbluCyble::wait_meter_response()
 {
     uint8_t *meterData = NULL;
@@ -634,6 +672,10 @@ bool EverbluCyble::wait_meter_response()
     }
     memset(meterData, 0, bytesReceived);
     meterDataSize = decode_4bitpbit_serial(rxBuffer, bytesReceived, meterData);
+
+    // Before the decode succeeds or fails: a frame too short to decode is
+    // exactly the one worth seeing.
+    dumpMeterResponse(meterData, meterDataSize);
 
     LOG("[Everblu] Decoding data received\n");
     success = decodeBufferReceived(meterData, meterDataSize);
