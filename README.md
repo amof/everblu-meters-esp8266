@@ -1,112 +1,196 @@
-# everblu-meters - Water usage data for Home Assistant
+# everblu-meters
 
-Fetch water/gas usage data from Cyble EverBlu meters using RADIAN protocol on 433Mhz. Integrated with Home Assistant via MQTT.
-This fork is based on:
+Read your water meter from Home Assistant. An ESP8266 and a 433 MHz radio
+interrogate an **Itron EverBlu Cyble Enhanced** meter over the RADIAN protocol
+once a day, and publish the index over MQTT.
 
-- <http://www.lamaisonsimon.fr/wiki/doku.php?id=maison2:compteur_d_eau:compteur_d_eau>
-- <https://github.com/psykokwak-com/everblu-meters-esp8266>
+> [!WARNING]
+> **This fork does not currently read a meter.** The radio library was rewritten
+> from scratch and there is an open bug in ESP↔meter communication. Everything
+> below is accurate, but expect to debug. Help welcome.
 
-Meters supported:
+Based on [lamaisonsimon's
+wiki](http://www.lamaisonsimon.fr/wiki/doku.php?id=maison2:compteur_d_eau:compteur_d_eau)
+and [psykokwak-com/everblu-meters-esp8266](https://github.com/psykokwak-com/everblu-meters-esp8266).
 
-- Itron EverBlu Cyble Enhanced
+## What you need
 
-## Current State
+- A **NodeMCU 0.9** (ESP-12) — other ESP8266 boards work, see [Wiring](#wiring).
+- A **CC1101 433 MHz** module.
+- ~17.3 cm of wire for an antenna, or a 433 MHz antenna.
+- An MQTT broker, and Home Assistant if you want the entities.
+- Your meter's **year** and **serial**, read off its label (see `meter_label.png`).
 
-This fork has the everblu library completely rewritten from scratch.
-As a consequence, there are a few things missing and today a blocking bug where the ESP is not able to communicate with the Everblu. Investigation is on-going and if you wish to help, don't hesitate to do it.
+## Wiring
 
-## Features
+Seven wires. Match the CC1101 pins by the **label silkscreened on your board**,
+not by position — pin order differs between the generic 8-pin modules and the
+E07-M1101D, and both are sold as "CC1101 433MHz".
 
-- Completely rewritten code of cc1101 to improve reliability and understanding
-- Auto-discovery of water meter frequency and record it in EEPROM
-- HASS auto-discovery
-- Deep-sleep mode
-- CC1101 frequency autocalibration & compensation
-- Debugging much more easier (with serial link)
-- Time synchronization using *configTime* to avoid buggy Arduino library
+| CC1101 | NodeMCU | GPIO | |
+| --- | --- | --- | --- |
+| VDD | `3V3` | — | **3.3 V only** |
+| GND | `GND` | — | |
+| CSN | `D8` | 15 | fixed |
+| SCK | `D5` | 14 | fixed |
+| SI (MOSI) | `D7` | 13 | fixed |
+| SO (MISO) | `D6` | 12 | fixed |
+| GDO0 | `D1` | 5 | configurable |
+| GDO2 | — | — | leave unconnected |
 
-## Build & configuration
+```mermaid
+flowchart LR
+  subgraph ESP["NodeMCU 0.9 (ESP-12)"]
+    direction TB
+    n1["3V3"]
+    n2["GND"]
+    n3["D8 / GPIO15"]
+    n4["D5 / GPIO14"]
+    n5["D7 / GPIO13"]
+    n6["D6 / GPIO12"]
+    n7["D1 / GPIO5"]
+  end
+  subgraph RF["CC1101 433 MHz"]
+    direction TB
+    c1["VDD"]
+    c2["GND"]
+    c3["CSN"]
+    c4["SCK"]
+    c5["SI (MOSI)"]
+    c6["SO (MISO)"]
+    c7["GDO0"]
+    c8["GDO2 (unused)"]
+  end
+  n1 --- c1
+  n2 --- c2
+  n3 --- c3
+  n4 --- c4
+  n5 --- c5
+  n6 --- c6
+  n7 --- c7
+```
 
-### Dependencies
+The four SPI lines are the ESP8266's hardware SPI peripheral and cannot be
+moved. Only GDO0 is a choice. The SPI clock is 500 kHz, so dupont jumpers are
+fine.
 
-- EspMQTTClient library <https://github.com/plapointe6/EspMQTTClient> (by Patrick Lapointe) version **1.13.3**
+> [!CAUTION]
+> Power the module from **`3V3`, never `VIN`**. The CC1101 is not 5 V tolerant
+> (3.9 V absolute maximum) and `VIN` sits right beside `3V3` on the header.
 
-### Configuration
+> [!IMPORTANT]
+> **Fit the antenna before powering up.** A quarter wave at 433 MHz is ~17.3 cm
+> of wire. Without one, range is centimetres and the frequency scan silently
+> finds nothing — which looks exactly like a software bug.
 
-In the file *everblu-meters-esp8266.ino*, adapt those to your needs:
+<details>
+<summary>Using a different GDO0 pin</summary>
+
+`D1` (GPIO5) is the default, so wiring to it needs no code change. `D2` (GPIO4)
+is the only other safe pin. Avoid the rest:
+
+- `D0` / GPIO16 — no internal pull-up, and the driver needs one.
+- `D3` / GPIO0, `D4` / GPIO2 — boot straps, must be HIGH at reset. `D4` is also the onboard LED.
+- `D8` / GPIO15 — boot strap, must be LOW at reset; already CSN.
+- `TX` / `RX` — the serial console, used heavily for logging.
+- GPIO6–11 — wired to the flash chip.
+
+</details>
+
+## Build & flash
+
+Uses [PlatformIO](https://platformio.org/). Edit
+`src/everblu-meters-esp8266.ino` first:
 
 ```c
 const char *NtpServer = "myNtpServer";
-const char *TZstr = "UTC+0,M3.5.0,M10.5.0/3"; // https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+const char *TZstr = "CET-1CEST,M3.5.0,M10.5.0/3"; // Europe/Brussels
 
-// User defined - read these off the meter label (see meter_label.png)
-#define METER_YEAR 20       // Two-digit year
-#define METER_SERIAL 123456 // Serial WITHOUT any leading zero
-#define GDO0_PIN 5          // GPIO connected to the CC1101 GDO0 pin
+#define METER_YEAR 20       // Two-digit year from the meter label
+#define METER_SERIAL 123456 // Serial, WITHOUT any leading zero
+#define GDO0_PIN 5          // Leave at 5 if you wired GDO0 to D1
 
 EspMQTTClient mqtt(
   "WifiSSID",
   "WifiPassword",
-  "myMqttServer",   // MQTT Broker server
-  "MQTTUsername",   // Can be omitted if not needed
-  "MQTTPassword",   // Can be omitted if not needed
-  "TestClient"      // Client name that uniquely identify your device
+  "myMqttServer",   // MQTT broker
+  "MQTTUsername",   // Omit if not needed
+  "MQTTPassword",   // Omit if not needed
+  "TestClient"      // Unique client name
 );
 ```
 
-> **Serial number:** do not keep a leading zero. `0123456` is an *octal* literal in
-> C, so it silently becomes 42798, and a serial containing an 8 or a 9 will not
+> [!WARNING]
+> **Drop any leading zero from the serial.** `0123456` is an *octal* literal in
+> C — it silently becomes 42798, and a serial containing an 8 or 9 will not
 > compile at all. Write `123456`.
 
-> **GDO0 pin:** the default is GPIO5 (D1). Set it to whichever pin your CC1101's
-> GDO0 is wired to. Avoid GPIO0 — it is a boot-mode strapping pin on the ESP8266.
+`TZstr` is a [POSIX TZ
+string](https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html),
+not an IANA name — it defaults to Europe/Brussels. Note the sign is inverted:
+`CET-1` means UTC**+**1. Find yours in the `TZ` column of [this
+list](https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv).
 
-## Operation
+Then:
 
-The reader interrogates the meter **once a day at 12:00 local time** by default,
-and publishes the result. On first use it does not yet know which frequency
-reaches your meter, so press **Full Scan** once; the frequency it finds is stored
-in EEPROM and reused from then on.
+```sh
+pio run -t upload      # build and flash
+pio device monitor     # 115200 baud
+pio test -e native     # optional: run the desktop tests
+```
 
-All controls appear in Home Assistant via autodiscovery, under one *Everblu
-Cyble* device:
+`platformio.ini` targets `board = nodemcu`, which is the NodeMCU **0.9**. For a
+NodeMCU 1.0 (ESP-12E) change it to `nodemcuv2`; the pinout above is unchanged.
+
+## First run
+
+The reader does not yet know which frequency reaches your meter, so it must
+search for it once:
+
+1. Wait for the device to connect to WiFi and MQTT, and for NTP to set the clock.
+2. Press **Full Scan** in Home Assistant, during the meter's waking hours
+   (Mon–Sat, 06:00–18:00).
+3. The scan takes minutes of continuous transmission. The frequency it finds is
+   saved to EEPROM and reused from then on.
+
+From then on the meter is read **once a day at 12:00 local time** by default.
+
+## Home Assistant
+
+Entities appear automatically under one *Everblu Cyble* device:
 
 | Entity | Topic | Purpose |
 | --- | --- | --- |
-| Reading Time | `everblu/cyble/schedule/time/set` | Time of the daily reading as `HH:MM`, e.g. `12:30`. Persisted. |
-| Read Now | `everblu/cyble/command/read` | Read immediately using the known frequency. |
-| Full Scan | `everblu/cyble/command/scan` | Forget the stored frequency and sweep for it. |
+| Reading Time | `everblu/cyble/schedule/time/set` | Daily reading time as `HH:MM`. Persisted. |
+| Read Now | `everblu/cyble/command/read` | Read immediately on the known frequency. |
+| Full Scan | `everblu/cyble/command/scan` | Forget the frequency and search again. |
 | Status | `everblu/cyble/status` | `ok`, `reading`, `sweeping`, `asleep`, `no_response`, `not_provisioned`, `no_clock` |
 
 Readings are published retained on `everblu/cyble/liters`, `.../battery` and
 `.../num_readings`.
 
-### Debugging without a serial cable
+## Troubleshooting
 
-Everything written to the serial console is mirrored to `everblu/cyble/log`, one
-line per message:
+**Watch the logs without a serial cable.** Everything on the serial console is
+mirrored to `everblu/cyble/log`:
 
 ```sh
 mosquitto_sub -h myMqttServer -t 'everblu/cyble/log' -v
 ```
 
-This topic is deliberately *not* exposed as a Home Assistant entity — it is far
-too chatty for the recorder, and entity states are capped at 255 characters.
+This is not exposed as a Home Assistant entity — it is far too chatty for the
+recorder. Anything logged before the broker connects stays on serial only.
 
-Lines are queued and published from the main loop rather than at the point of
-logging, because much of what is logged happens inside timing-sensitive radio
-sequences where a network stall would break the exchange. The queue holds 24
-lines; if it overflows, the oldest are dropped and a `[log] N lines dropped`
-notice is emitted so gaps are never silent. Anything logged before the broker
-connects stays on serial only.
+**Status is `asleep`.** The meter is deaf outside **Mon–Sat, 06:00–18:00**, and
+the reader will not transmit then. Nothing is wrong.
 
-### When the meter will not answer
+**Status is `no_clock`.** NTP has not synchronised yet. The waking-hours check
+needs the time, so the reader refuses to transmit until it has it.
 
-The meter is deaf outside **Monday–Saturday, 06:00–18:00**, and the reader will
-not transmit then — a manual read or scan at 22:00 returns `asleep` without
-putting anything on the air. It also refuses to transmit before NTP has
-synchronised the clock (`no_clock`), since the window check depends on it.
+**Status is `no_response`.** The meter did not answer on any frequency tried.
+Check the antenna first, then the wiring, then that the year and serial match
+the label.
 
-A scheduled reading is tracked by date, not by a countdown: if the device is
-offline or the meter is unreachable at 12:00, it retries on subsequent ticks the
-same day, and stops once that day has been read successfully.
+**A scheduled reading was missed.** Readings are tracked by date, not by a
+countdown — if the device was offline at 12:00 it retries later the same day,
+and stops once that day has been read.
