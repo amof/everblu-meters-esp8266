@@ -15,6 +15,10 @@ constexpr const char *scheduleTimeStateTopic = "everblu/cyble/schedule/time";
 // Home Assistant's recorder, and a state value is capped at 255 characters.
 // Follow it with: mosquitto_sub -t 'everblu/cyble/log' -v
 constexpr const char *logTopic = "everblu/cyble/log";
+// The same lines, joined and published retained, so a client that connects
+// after the fact can still read recent history. The live topic above is not
+// retained and is therefore invisible to anyone who was not already listening.
+constexpr const char *logRecentTopic = "everblu/cyble/log/recent";
 
 // Command topics - Home Assistant publishes, the device subscribes
 constexpr const char *scheduleTimeSetTopic = "everblu/cyble/schedule/time/set";

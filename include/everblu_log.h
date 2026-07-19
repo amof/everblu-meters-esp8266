@@ -10,6 +10,11 @@
 #define LOG_LINE_MAX 128
 #define LOG_LINE_COUNT 24
 
+// Size of the joined history published as one retained message. Must leave room
+// for the topic and MQTT header inside the client's maximum packet size, which
+// the sketch raises to 1024.
+#define LOG_SNAPSHOT_MAX 900
+
 typedef void (*LogSink)(const char *line);
 
 /**
@@ -19,8 +24,23 @@ typedef void (*LogSink)(const char *line);
 void logSetSink(LogSink sink);
 
 /**
+ * @brief Where the retained history snapshot is delivered.
+ *
+ * The live sink only reaches clients connected at the moment a line is
+ * produced. This one is handed the last few lines joined together, whenever
+ * they change, so it can be published retained — letting a client that
+ * connects later still see what happened. Optional; unset means no snapshot.
+ */
+void logSetSnapshotSink(LogSink sink);
+
+/**
  * @brief Write a line to Serial and queue it for the sink.
  *        Safe to call from timing-critical code: it never does I/O beyond Serial.
+ *
+ * Queued lines are prefixed with the local time at which they were logged, so a
+ * captured log reflects when things happened rather than when they were
+ * published. Serial output is left unprefixed: some callers build one line from
+ * several calls, which a per-call stamp would break.
  */
 void logPrintf(const char *format, ...) __attribute__((format(printf, 1, 2)));
 

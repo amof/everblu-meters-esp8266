@@ -171,15 +171,61 @@ Readings are published retained on `everblu/cyble/liters`, `.../battery` and
 
 ## Troubleshooting
 
-**Watch the logs without a serial cable.** Everything on the serial console is
-mirrored to `everblu/cyble/log`:
+### Logs
+
+Everything on the serial console is mirrored to `everblu/cyble/log`, one line
+per message, each stamped with the local time the event occurred:
 
 ```sh
 mosquitto_sub -h myMqttServer -t 'everblu/cyble/log' -v
 ```
 
-This is not exposed as a Home Assistant entity — it is far too chatty for the
-recorder. Anything logged before the broker connects stays on serial only.
+This topic is **not retained** — the broker keeps no copy, so you only see lines
+that arrive while you are subscribed. The device is silent between readings, so
+an idle MQTT Explorer will show nothing at all. Press **Read Now** to produce
+traffic. It is also not exposed as a Home Assistant entity: far too chatty for
+the recorder.
+
+Lines logged before MQTT connects stay on serial only; `Log mirroring started`
+marks the boundary.
+
+### Recent history
+
+Reads happen once a day and failures are easy to miss, so the last few lines are
+also published, joined together and **retained**, on:
+
+    everblu/cyble/log/recent
+
+Because it is retained, the broker holds a copy: open MQTT Explorer at any time
+and recent history is already there, with no subscription timing to get right
+and nothing to configure in Home Assistant.
+
+It holds roughly the last 24 lines, capped at 900 bytes, and is refreshed
+whenever something new is logged. That is enough to cover a whole read, and the
+tail of a sweep.
+
+> [!NOTE]
+> The snapshot lives in RAM, so it is empty after a reboot and fills up again as
+> the device logs. For unlimited history that survives reboots, subscribe to the
+> live topic and append it to a file:
+>
+>     mosquitto_sub -h myMqttServer -t everblu/cyble/log >> everblu.log
+
+### Reading the log
+
+Timestamps come from the device and record when the event happened, not when it
+was published — lines are queued and sent from the main loop, so they can arrive
+seconds late. Before NTP has set the clock they read `boot+12.345`, seconds
+since power-on.
+
+> [!WARNING]
+> **The log has gaps by design.** It is published at QoS 0 — the underlying
+> `PubSubClient` supports nothing else — so anything logged while the broker
+> connection is down is lost rather than queued, and anything logged before MQTT
+> connects stays on serial. The retained snapshot recovers some of this, since
+> it is republished in full on every reconnect, but if you are chasing a fault
+> that takes WiFi or the broker down with it, keep a serial cable attached. This
+> is a convenience, not a flight recorder.
 
 **Status is `asleep`.** The meter is deaf outside **Mon–Sat, 06:00–18:00**, and
 the reader will not transmit then. Nothing is wrong.

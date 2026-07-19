@@ -22,7 +22,9 @@
 #define DEBUG_MQTT
 
 const char *NtpServer = "myNtpServer";
-const char *TZstr = "UTC+0,M3.5.0,M10.5.0/3"; // https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+// Europe/Brussels. POSIX inverts the sign: CET-1 means UTC+1.
+// https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+const char *TZstr = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 // User defined - read these off the meter label (see meter_label.png)
 #define METER_YEAR 20      // Two-digit year, e.g. 20 for a meter marked 20
@@ -180,6 +182,12 @@ void onConnectionEstablished()
   // Only now is publishing possible, so this is where the log starts mirroring.
   // Anything logged before this point stays Serial-only.
   logSetSink([](const char *line) { mqtt.publish(logTopic, line); });
+  // Retained, unlike the live topic: this is what makes recent history visible
+  // to a client that connects long after the lines were produced.
+  logSetSnapshotSink([](const char *blob) { mqtt.publish(logRecentTopic, blob, true); });
+  // Makes the topic exist as soon as we connect, and marks the boundary in a
+  // captured log where Serial-only history ends and MQTT history begins.
+  LOG("[Everblu] Log mirroring started\n");
 
   // Update time with NTP server
   request_ntp_time();
