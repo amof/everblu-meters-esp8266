@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include "everblu_log.h"
+#include "utils.h"
 
 static char _lines[LOG_LINE_COUNT][LOG_LINE_MAX];
 static uint8_t _head = 0;   // Next slot to write
@@ -19,9 +20,35 @@ static char _snapshot[LOG_SNAPSHOT_MAX];
 static LogSink _snapshotSink = NULL;
 static bool _snapshotStale = false;
 
+static CaptureSink _captureSink = NULL;
+static char _capture[CAPTURE_B64_MAX];
+
 void logSetSink(LogSink sink)
 {
     _sink = sink;
+}
+
+void logSetCaptureSink(CaptureSink sink)
+{
+    _captureSink = sink;
+}
+
+void logCapture(const char *what, const uint8_t *data, size_t len)
+{
+    if (_captureSink == NULL || data == NULL || len == 0)
+        return;
+
+    size_t written = base64_encode(data, len, _capture, sizeof(_capture));
+    if (written == 0)
+    {
+        // Encoding only refuses when the buffer is too small, which means the
+        // capture is larger than anything the protocol should produce. Say so
+        // rather than publishing a fragment that would decode to a wrong frame.
+        logPrintf("[capture] %s too large to publish: %u bytes\n", what, (unsigned)len);
+        return;
+    }
+
+    _captureSink(what, _capture);
 }
 
 void logSetSnapshotSink(LogSink sink)

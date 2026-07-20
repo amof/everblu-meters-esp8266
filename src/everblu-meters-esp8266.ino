@@ -148,6 +148,52 @@ void publishWiring()
 }
 
 /**
+ * @brief Publish last month's index, and the rest of the history as attributes.
+ *
+ * Nothing is published when the response carried no history: a truncated frame
+ * would otherwise overwrite a good retained value with a zero, and the reader
+ * has no way to tell Home Assistant "I do not know" other than by staying quiet.
+ */
+void publishMeterHistory()
+{
+  if (cyble.monthlyCount == 0)
+  {
+    LOG("[Everblu] No monthly history in this response, not publishing\n");
+    return;
+  }
+
+  // The last entry is M-1, whatever the count: the series is stored oldest
+  // first, so a truncated frame loses the recent months, not the old ones.
+  mqtt.publish(previousIndexStateTopic,
+               String(cyble.monthlyIndex[cyble.monthlyCount - 1]), true);
+
+  // 13 indexes at up to 10 digits, plus the clock and serial, fits well inside
+  // the raised MQTT packet size.
+  char json[512];
+  int used = snprintf(json, sizeof(json), "{\"history_oldest_first\": [");
+  for (uint8_t m = 0; m < cyble.monthlyCount && used > 0 && used < (int)sizeof(json); m++)
+  {
+    used += snprintf(json + used, sizeof(json) - used, "%s%u",
+                     m == 0 ? "" : ", ", cyble.monthlyIndex[m]);
+  }
+  if (used > 0 && used < (int)sizeof(json))
+    used += snprintf(json + used, sizeof(json) - used,
+                     "], \"months_reported\": %u, \"meter_serial\": \"%s\", "
+                     "\"meter_clock\": \"20%02u-%02u-%02u %02u:%02u:%02u\"}",
+                     cyble.monthlyCount, cyble.meterSerial,
+                     cyble.readYear, cyble.readMonth, cyble.readDay,
+                     cyble.readHour, cyble.readMinute, cyble.readSecond);
+
+  if (used <= 0 || used >= (int)sizeof(json))
+  {
+    LOG("[Everblu] Meter attributes did not fit, not publishing\n");
+    return;
+  }
+
+  mqtt.publish(meterAttributesTopic, json, true);
+}
+
+/**
  * @brief Publish the outcome of a read attempt.
  */
 void publishResult(MeterReadResult result)
@@ -159,6 +205,7 @@ void publishResult(MeterReadResult result)
     mqtt.publish(indexStateTopic, String(cyble.currentIndex), true);
     mqtt.publish(batteryStateTopic, String(cyble.batteryLifetime), true);
     mqtt.publish(readingsStateTopic, String(cyble.numReadings), true);
+    publishMeterHistory();
     mqtt.publish(statusStateTopic, "ok", true);
     publishLastRead();
     break;
@@ -170,6 +217,14 @@ void publishResult(MeterReadResult result)
   case METER_NO_RESPONSE:
     Serial.println("Unable to retrieve data from meter.");
     mqtt.publish(statusStateTopic, cyble.isProvisioned() ? "no_response" : "not_provisioned", true);
+    break;
+
+  case METER_UNREADABLE:
+    // Deliberately not no_response: the meter did answer. Saying otherwise
+    // would send someone hunting for an antenna or a frequency problem that
+    // the acknowledgement has already ruled out.
+    Serial.println("Meter answered but its response could not be read.");
+    mqtt.publish(statusStateTopic, "unreadable", true);
     break;
 
   case METER_BUSY:
@@ -201,6 +256,31 @@ void readNow()
 /**
  * @brief Forget the stored frequency and sweep the whole band for it.
  */
+// Aimed by hand over MQTT, and deliberately not persisted: it is a diagnostic
+// aim, not something the reader should still believe after a reboot. The
+// working frequency that survives lives in the meter profile.
+float testFrequencyMhz = 433.82f;
+
+void publishTestFrequency()
+{
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.4f", testFrequencyMhz);
+  mqtt.publish(testFrequencyStateTopic, buf, true);
+}
+
+void testFrequencyNow()
+{
+  if (!cbtime_set)
+  {
+    Serial.println("Clock not synchronized yet, refusing to transmit");
+    mqtt.publish(statusStateTopic, "no_clock", true);
+    return;
+  }
+
+  mqtt.publish(statusStateTopic, "reading", true);
+  publishResult(cyble.testFrequency(time(nullptr), testFrequencyMhz));
+}
+
 void sweepNow()
 {
   if (!cbtime_set)
@@ -258,6 +338,13 @@ void onConnectionEstablished()
   // Retained, unlike the live topic: this is what makes recent history visible
   // to a client that connects long after the lines were produced.
   logSetSnapshotSink([](const char *blob) { mqtt.publish(logRecentTopic, blob, true); });
+  // Retained, and one topic per frame name: a capture is the artefact the whole
+  // diagnostic exists to produce, so it must survive until someone comes to
+  // fetch it rather than requiring a subscriber to be watching at the time.
+  logSetCaptureSink([](const char *what, const char *base64) {
+    String topic = String(captureTopicPrefix) + what;
+    mqtt.publish(topic, base64, true);
+  });
   // Makes the topic exist as soon as we connect, and marks the boundary in a
   // captured log where Serial-only history ends and MQTT history begins.
   // Naming the firmware on the boundary line rather than its own means every
@@ -281,6 +368,8 @@ void onConnectionEstablished()
   delay(50); // Do not remove
   mqtt.publish(readingsConfigTopic, readingsConfigPayload, true);
   delay(50); // Do not remove
+  mqtt.publish(previousIndexConfigTopic, previousIndexConfigPayload, true);
+  delay(50); // Do not remove
   mqtt.publish(statusConfigTopic, statusConfigPayload, true);
   delay(50); // Do not remove
   mqtt.publish(lastReadConfigTopic, lastReadConfigPayload, true);
@@ -295,6 +384,10 @@ void onConnectionEstablished()
   delay(50); // Do not remove
   mqtt.publish(buttonWiringConfigTopic, buttonWiringConfigPayload, true);
   delay(50); // Do not remove
+  mqtt.publish(testFrequencyConfigTopic, testFrequencyConfigPayload, true);
+  delay(50); // Do not remove
+  mqtt.publish(buttonTestFrequencyConfigTopic, buttonTestFrequencyConfigPayload, true);
+  delay(50); // Do not remove
 
   // Reflect the stored schedule so the Home Assistant entity shows the value
   // actually in force rather than an empty state.
@@ -306,6 +399,27 @@ void onConnectionEstablished()
   // connect after a power cycle — and that is exactly when someone is asking
   // whether the reader has worked recently.
   publishLastRead();
+  // Reflect the aim so the entity shows a value rather than being blank until
+  // someone sets one.
+  publishTestFrequency();
+
+  mqtt.subscribe(testFrequencySetTopic, [](const String &message) {
+    float freq = message.toFloat();
+    // toFloat() yields 0 for anything unparsable, which the band check rejects
+    // along with any genuinely out-of-band request.
+    if (!(freq >= 433.76f && freq <= 433.89f))
+    {
+      LOG("Ignoring test frequency '%s'\n", message.c_str());
+      return;
+    }
+    testFrequencyMhz = freq;
+    publishTestFrequency();
+    LOG("[Everblu] Test frequency set to %.4f MHz\n", testFrequencyMhz);
+  });
+
+  // Deliberately separate from setting the value: changing the aim must not
+  // transmit, or every keystroke in the Home Assistant box would wake the meter.
+  mqtt.subscribe(testFrequencyCommandTopic, [](const String &message) { testFrequencyNow(); });
 
   mqtt.subscribe(scheduleTimeSetTopic, [](const String &message) {
     uint8_t hour = 0;
@@ -347,8 +461,11 @@ void setup()
   // reboot loop this is still enough to tell which image is looping.
   Serial.printf("Everblu Cyble - Reader %s\n", FIRMWARE_VERSION);
 
-  // Change the packet size from 128 bytes to 1024
-  mqtt.setMaxPacketSize(1024);
+  // Raised from the library default so a whole radio capture fits one message:
+  // 768 raw bytes is 1024 base64 characters, plus a ~26-character topic and the
+  // fixed header. A capture split across packets would have to be reassembled
+  // by hand before it could be decoded, which is exactly when it gets corrupted.
+  mqtt.setMaxPacketSize(1400);
 
 #ifdef DEBUG_MQTT
   mqtt.enableDebuggingMessages(true);

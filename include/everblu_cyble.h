@@ -10,10 +10,26 @@
  */
 enum MeterReadResult
 {
-    METER_READ_OK,     // Data retrieved and decoded
-    METER_ASLEEP,      // Outside the meter's wakeup window, nothing transmitted
-    METER_NO_RESPONSE, // Meter did not answer on any frequency tried
-    METER_BUSY,        // A read or sweep is already running
+    METER_READ_OK,      // Data retrieved and decoded
+    METER_ASLEEP,       // Outside the meter's wakeup window, nothing transmitted
+    METER_NO_RESPONSE,  // Meter did not answer on any frequency tried
+    METER_BUSY,         // A read or sweep is already running
+    METER_UNREADABLE,   // Meter answered, but its response could not be read
+};
+
+/**
+ * What one exchange on one frequency achieved.
+ *
+ * The middle value is the one that earns this enum its place. A meter ack is
+ * proof the frequency is right: the meter heard the master request and replied
+ * on it. So a failure that happens *after* an ack is never a reason to try
+ * another frequency, and the sweep must be able to tell the two apart.
+ */
+enum ExchangeOutcome
+{
+    EXCHANGE_NO_ANSWER, // Silence; this frequency may well be the wrong one
+    EXCHANGE_ACK_ONLY,  // Meter acknowledged, but its response did not decode
+    EXCHANGE_COMPLETE,  // A full reading
 };
 
 /**
@@ -70,6 +86,16 @@ public:
      * replaced. Costs minutes of transmission, so it is never automatic.
      */
     MeterReadResult sweepForMeter(time_t now);
+
+    /**
+     * @brief One exchange at one frequency, and nothing more.
+     *
+     * Never sweeps and never falls back. Exists so a diagnostic costs the meter
+     * a single wake-up preamble rather than the 61 a failed sweep spends —
+     * repeated sweeping appears to be enough to stop a meter answering at all.
+     * Saves the profile if a full reading results.
+     */
+    MeterReadResult testFrequency(time_t now, float freqMhz);
     /**
      * @brief Read if the scheduled time has passed and today has not been read.
      *
@@ -152,6 +178,30 @@ public:
     uint8_t wakeupStart;     // Hour the meter starts answering
     uint8_t wakeupStop;      // Hour the meter stops answering
 
+    // Thirteen monthly indexes, oldest first: [0] is M-13, [12] is M-1. Each is
+    // a cumulative index like currentIndex, not a monthly consumption, so the
+    // series only ever rises. They live at the very end of the response, which
+    // is why an undersized capture destroyed them long before it touched
+    // anything else.
+    static const uint8_t MONTHLY_HISTORY_COUNT = 13;
+    uint32_t monthlyIndex[MONTHLY_HISTORY_COUNT];
+    // How many of the above the response actually carried. Short of the full
+    // count means the frame was truncated, not that the meter has no history.
+    uint8_t monthlyCount;
+
+    // When the meter believes it answered, by its own clock — which runs free
+    // and has been seen minutes adrift, so it dates the reading rather than
+    // timing it.
+    uint8_t readDay, readMonth, readYear; // Year is two digits, 26 for 2026
+    uint8_t readWeekday;
+    uint8_t readHour, readMinute, readSecond;
+
+    // The serial as the meter spells it, distinct from the year and serial that
+    // form its radio address. Stored on the wire reversed, and NUL-terminated
+    // here after being put back in reading order.
+    static const uint8_t METER_SERIAL_MAX = 11;
+    char meterSerial[METER_SERIAL_MAX + 1];
+
 private:
     uint8_t _year;
     uint32_t _serial;
@@ -212,12 +262,18 @@ private:
      * @param foundMhz Set to the frequency that worked
      * @return true if the meter answered
      */
-    bool sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz);
-    bool tryFrequency(float freqMhz);
+    ExchangeOutcome sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz);
+    ExchangeOutcome tryFrequency(float freqMhz);
 
     // Exchange
-    bool getDataFromMeter();
+    ExchangeOutcome getDataFromMeter();
     bool decodeBufferReceived(const uint8_t *decoded_buffer, uint8_t size);
+
+    /** @brief One 4-byte little-endian cumulative index at a frame offset. */
+    static uint32_t readIndexAt(const uint8_t *buffer, uint8_t offset);
+
+    /** @brief Put the meter's own serial back into reading order. */
+    void decodeMeterSerial(const uint8_t *buffer, uint8_t size);
     bool isLookLikeRadianFrame(const uint8_t *buffer, uint32_t len);
     void initializeForSyncPatternReception();
     void initializeForDataReception();
@@ -244,8 +300,29 @@ private:
      * @return Number of bytes written to rxBuffer, 0 on failure
      */
     uint32_t receiveData(uint32_t timeoutMs, uint32_t expectedFrameBytes, uint8_t *rxBuffer, uint32_t rxBufferSize);
-    bool wait_meter_ack();
+    /**
+     * @brief Receive the meter ack, and nothing else.
+     *
+     * Nothing may be decoded, logged or printed here: the meter starts sending
+     * its response immediately afterwards, so any work between the two is time
+     * stolen from the listener. The raw capture is handed to the caller to
+     * examine once the exchange has closed.
+     *
+     * @param[out] capture Optional: receives ownership of the raw oversampled
+     *             buffer, which the caller must free. NULL when nothing arrived.
+     * @param[out] captureLen Optional: how many bytes @p capture holds.
+     */
+    bool wait_meter_ack(uint8_t **capture = NULL, uint32_t *captureLen = NULL);
     bool wait_meter_response();
+
+    /**
+     * @brief Does a captured ack name our meter as its sender?
+     *
+     * Reads only the identity fields in the frame's first 14 bytes, which sit
+     * ahead of anything the decoder is known to lose off the tail and need no
+     * checksum to be trusted.
+     */
+    bool ackIdentifiesOurMeter(const uint8_t *raw, uint32_t rawLen);
 };
 
 #endif // __EVERBLU_CYBLE_H__

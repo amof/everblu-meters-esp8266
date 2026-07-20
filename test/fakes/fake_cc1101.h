@@ -49,6 +49,8 @@ struct FakeCC1101
     // never touched IOCFG0 cannot be mistaken for one that restored it.
     uint8_t iocfg0Writes[16];
     uint8_t iocfg0WriteCount;
+    // How many frequencies the reader has tuned to; see the FREQ0 note below.
+    uint16_t frequencyWrites;
 
     void reset()
     {
@@ -60,6 +62,7 @@ struct FakeCC1101
         gdo0 = GDO0_CONNECTED;
         spiConnected = true;
         iocfg0WriteCount = 0;
+        frequencyWrites = 0;
         memset(iocfg0Writes, 0, sizeof(iocfg0Writes));
     }
 };
@@ -160,6 +163,13 @@ inline void fakeSpiTransfer(uint8_t *data, int len)
 
         if (target == 0x02 && chip.iocfg0WriteCount < 16)
             chip.iocfg0Writes[chip.iocfg0WriteCount++] = data[i];
+
+        // FREQ0 is written once per frequency the reader tunes to, so counting
+        // it counts attempts — and every attempt costs the meter a ~2 second
+        // wake-up preamble. Airtime is the scarce resource here, so it needs to
+        // be observable.
+        if (target == 0x0F)
+            chip.frequencyWrites++;
     }
 }
 

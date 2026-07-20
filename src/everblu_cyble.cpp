@@ -32,16 +32,47 @@ const static uint16_t FREQ_STEPS_RECENTER = 3;
 #define EEPROM_MAGIC 0x45564231UL // "EVB1"
 #define EEPROM_SCHEMA 1
 
-// Index in frame for Everblu Cyble
+// Identity fields of any frame, per the Radian layout
+// L(1) C(1) S(1) Receiver(5) S(1) Sender(5) S(1) Data+checksum:
+#define INDEX_CONTROL 1        // 0x10 request, 0x06 acknowledge, 0x11 response
+#define INDEX_SENDER 9         // 0x45, year, then 3 serial bytes MSB first
+#define CONTROL_ACKNOWLEDGE 0x06
+#define ADDRESS_PREFIX 0x45
+#define IDENTITY_MIN_LEN (INDEX_SENDER + 5)
+
+// Payload offsets, frame-absolute.
+//
+// A warning about the source: docs/cyble/images/meter_data0.jpg numbers its
+// rows payload-relative, so every offset there reads 15 lower than these.
+// meter_data1.jpg, which carries the monthly history, numbers its rows
+// frame-absolute — the two tables do not share a base. Both also claim the
+// multi-byte values are big endian; they are little endian, confirmed against a
+// physical dial and against thirteen monthly indexes that only rise when read
+// that way.
 #define INDEX_CURRENT_INDEX 18
+#define INDEX_DATE 24 // Day, month, then two-digit year
+#define INDEX_WEEKDAY 27
+#define INDEX_TIME 28 // Hour, minute, then second
 #define INDEX_BATTERY_LIFE_TIME 31
+#define INDEX_METER_SERIAL 32 // ASCII, last character first, NUL-terminated
 #define INDEX_WAKEUP_START 44
 #define INDEX_WAKEUP_STOP 45
 #define INDEX_NUM_OF_READINGS 48
+#define INDEX_MONTHLY_HISTORY 70 // 13 x 4 bytes, M-13 first, ending at 121
 
 #define TX_TMO 300         // TX timeout
-#define RX_TMO 150         // RX timeout
-#define RX_RESP_TMO 700    // RX response timeout
+// Covers both waiting for sync and reading the ack out of the FIFO. The ack
+// capture is now 112 raw bytes, ~95ms at the oversampling rate, which left too
+// little of a 150ms budget for the wait in front of it. Raising it only makes a
+// silent frequency slower to abandon — waiting transmits nothing, so it costs
+// the meter no airtime.
+#define RX_TMO 250         // RX timeout
+// A full response is now 748 raw bytes, which at the 9.59kbps oversampling rate
+// takes ~624ms to arrive on its own, before sync detection. 700ms left no room
+// for that; the timeout would have truncated the capture even once the buffer
+// was big enough. Only reached after a meter ack, so a generous value costs
+// nothing on the frequencies that stay silent.
+#define RX_RESP_TMO 1000   // RX response timeout
 #define WUPBUFFER_SIZE 8   // Wake up buffer size
 #define FIFO_THRESHOLD 10  // Fifo Threshold
 #define TX_BUFFER_SIZE 39  // TX buffer size
@@ -70,12 +101,38 @@ const static uint8_t WAKE_UP_COUNT = 77; // 77 * (8*8) =  4928 bits
 #define WATER_METER_ACK_LEN 0x12
 #define WATER_METER_RESPONSE_LEN 0x7C
 
-// On the wire each byte carries 8 data bits plus a start and 2 stop bits...
-#define RADIAN_FRAME_SIZE(expectedSizeBytes) (((expectedSizeBytes) * (8 + 3) / 8) + 1)
+// On the wire each byte carries 8 data bits plus a start bit and stop bits.
+//
+// This said 2 stop bits, i.e. 11 bit periods per byte, and that undersized every
+// capture: the protocol notes give "1 start bit / no parity / 2 or 2.5 stop
+// bits", and a real 124-byte response measured 11.40 bit periods per byte. The
+// buffer ran out 4 bytes early, which read as a decoder fault for a long time —
+// the decode was correct, there was simply nothing left to decode.
+//
+// Sized for 3 stop bits, the upper bound the protocol notes say the meter
+// tolerates and what encode2serial_1_3 already transmits, so 2, 2.5 and 3 are
+// all covered without having to pin down which this meter uses. The cost is
+// ~60 bytes of heap per response; the cost of guessing low again is another
+// interrogation of a meter that does not answer indefinitely.
+#define RADIAN_FRAME_SIZE(expectedSizeBytes) (((expectedSizeBytes) * (8 + 4) / 8) + 1)
 // ...and the payload is captured at 4x the bit rate, so the raw RX buffer must
 // be four times the frame size. Dropping this factor overflows the heap.
 #define RADIAN_OVERSAMPLING 4
 #define RADIAN_RX_BUFFER_SIZE(expectedSizeBytes) (RADIAN_FRAME_SIZE(expectedSizeBytes) * RADIAN_OVERSAMPLING)
+
+// Growing the capture past what a single MQTT message can carry would not fail
+// loudly — captures would simply stop being published, and the one artefact
+// worth having would go missing exactly when something needed diagnosing.
+static_assert(RADIAN_RX_BUFFER_SIZE(WATER_METER_RESPONSE_LEN) <= CAPTURE_MAX_BYTES,
+              "Response capture no longer fits the capture publish buffer");
+
+// decode_4bitpbit_serial counts decoded bytes in a uint8_t, and it does not stop
+// at the frame's declared length — it runs on into whatever follows until the
+// samples are gone. A capture large enough to decode past 255 bytes would wrap
+// that counter and report a frame shorter than what it actually produced.
+// Eleven bit periods per byte is the floor, so it bounds the worst case.
+static_assert(RADIAN_RX_BUFFER_SIZE(WATER_METER_RESPONSE_LEN) * 8 / (RADIAN_OVERSAMPLING * 11) < 256,
+              "Capture could decode to more bytes than uint8_t can count");
 
 EverbluCyble::EverbluCyble(uint8_t gdoPin, uint8_t year, uint32_t serial)
 {
@@ -385,30 +442,113 @@ MeterReadResult EverbluCyble::readMeterInternal(time_t now)
         // The stored frequency is a hint, not a guarantee: the CC1101 crystal
         // error that the sweep compensates for moves with temperature.
         LOG("[Everblu] Reading at known frequency %.4f MHz\n", _profile.frequency);
-        if (tryFrequency(_profile.frequency))
+        ExchangeOutcome direct = tryFrequency(_profile.frequency);
+        if (direct == EXCHANGE_COMPLETE)
         {
             recordSuccessfulRead(now);
             return METER_READ_OK;
         }
 
+        // The meter answered on the stored frequency, so drift is not what is
+        // wrong. Re-centring would only repeat the same failure six times.
+        if (direct == EXCHANGE_ACK_ONLY)
+            return METER_UNREADABLE;
+
         LOG("[Everblu] No answer, re-centring around the known frequency\n");
-        if (sweepAround(_profile.frequency, FREQ_STEPS_RECENTER, &found))
+        ExchangeOutcome recentred = sweepAround(_profile.frequency, FREQ_STEPS_RECENTER, &found);
+        if (recentred == EXCHANGE_COMPLETE)
         {
             saveProfile(found); // Track the drift
             recordSuccessfulRead(now);
             return METER_READ_OK;
         }
+        if (recentred == EXCHANGE_ACK_ONLY)
+            return METER_UNREADABLE;
+
+        // Deliberately no full sweep here. Escalating cost 69 wake-up preambles
+        // per failed read, and the daily budget allows five of those: about
+        // twelve minutes of carrier forcing a battery meter awake, every day,
+        // for as long as it stays silent. That is enough to keep a meter from
+        // answering at all, so the recovery attempt becomes the thing that
+        // prevents recovery.
+        //
+        // It also could not have helped. Per ADR-0002 the sweep compensates for
+        // crystal error, which drifts slowly with temperature and is what the
+        // re-centring above already covers. A provisioned reader that suddenly
+        // hears nothing across seven frequencies has a meter that is not
+        // answering, not a crystal that moved 60kHz since yesterday. Searching
+        // the whole band asks a question already answered.
+        //
+        // A full sweep remains available on request, where someone has decided
+        // the stored frequency is wrong and is willing to spend the airtime.
+        LOG("[Everblu] Known frequency and re-centring both failed, not sweeping\n");
+        return METER_NO_RESPONSE;
     }
 
     LOG("[Everblu] Full sweep\n");
-    if (sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found))
+    ExchangeOutcome swept = sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found);
+    if (swept == EXCHANGE_COMPLETE)
     {
         saveProfile(found);
         recordSuccessfulRead(now);
         return METER_READ_OK;
     }
+    if (swept == EXCHANGE_ACK_ONLY)
+        return METER_UNREADABLE;
 
     return METER_NO_RESPONSE;
+}
+
+MeterReadResult EverbluCyble::testFrequency(time_t now, float freqMhz)
+{
+    if (_busy)
+    {
+        LOG("[Everblu] Radio already busy, ignoring request\n");
+        return METER_BUSY;
+    }
+
+    if (!(freqMhz >= FREQ_MIN && freqMhz <= FREQ_MAX))
+    {
+        LOG("[Everblu] %.4f MHz is outside %.4f-%.4f, ignoring\n", freqMhz, FREQ_MIN, FREQ_MAX);
+        return METER_NO_RESPONSE;
+    }
+
+    warnIfWiringFailed();
+
+    _busy = true;
+    MeterReadResult result;
+
+    if (!isMeterAwake(now))
+    {
+        LOG("[Everblu] Outside the meter's wakeup window, not transmitting\n");
+        result = METER_ASLEEP;
+    }
+    else
+    {
+        // Exactly one exchange. The whole point is to cost the meter a single
+        // wake-up preamble instead of the 61 a failed sweep spends, so nothing
+        // here falls back to sweeping when it fails.
+        LOG("[Everblu] Single attempt at %.4f MHz\n", freqMhz);
+        switch (tryFrequency(freqMhz))
+        {
+        case EXCHANGE_COMPLETE:
+            // A full reading is this project's own proof that a frequency
+            // works, so it is worth keeping even from a hand-aimed attempt.
+            saveProfile(freqMhz);
+            recordSuccessfulRead(now);
+            result = METER_READ_OK;
+            break;
+        case EXCHANGE_ACK_ONLY:
+            result = METER_UNREADABLE;
+            break;
+        default:
+            result = METER_NO_RESPONSE;
+            break;
+        }
+    }
+
+    _busy = false;
+    return result;
 }
 
 MeterReadResult EverbluCyble::sweepForMeterInternal(time_t now)
@@ -424,12 +564,15 @@ MeterReadResult EverbluCyble::sweepForMeterInternal(time_t now)
     // Deliberately ignores any stored frequency: this is what the user reaches
     // for when the stored one is believed wrong.
     LOG("[Everblu] Full sweep requested\n");
-    if (sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found))
+    ExchangeOutcome swept = sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found);
+    if (swept == EXCHANGE_COMPLETE)
     {
         saveProfile(found);
         recordSuccessfulRead(now);
         return METER_READ_OK;
     }
+    if (swept == EXCHANGE_ACK_ONLY)
+        return METER_UNREADABLE;
 
     return METER_NO_RESPONSE;
 }
@@ -440,7 +583,7 @@ void EverbluCyble::recordSuccessfulRead(time_t now)
     saveSchedule();
 }
 
-bool EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz)
+ExchangeOutcome EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz)
 {
     // Walk outwards from the centre so the common case (little crystal error)
     // terminates after a handful of attempts instead of sweeping the whole band.
@@ -457,10 +600,23 @@ bool EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundM
             if (freq < FREQ_MIN || freq > FREQ_MAX)
                 continue;
 
-            if (tryFrequency(freq))
+            ExchangeOutcome outcome = tryFrequency(freq);
+            if (outcome == EXCHANGE_COMPLETE)
             {
                 *foundMhz = freq;
-                return true;
+                return EXCHANGE_COMPLETE;
+            }
+
+            // The meter answered here, so the frequency is not what is wrong.
+            // Carrying on would spend minutes of airtime, and a wake-up
+            // preamble of the meter's battery per step, searching for something
+            // already found. Report the frequency anyway: it is the one piece
+            // of knowledge this sweep did establish.
+            if (outcome == EXCHANGE_ACK_ONLY)
+            {
+                LOG("[Everblu] Meter answered at %.4f MHz but its response could not be read\n", freq);
+                *foundMhz = freq;
+                return EXCHANGE_ACK_ONLY;
             }
 
             // A full sweep runs for minutes, far longer than an MQTT keepalive.
@@ -470,10 +626,10 @@ bool EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundM
         }
     }
 
-    return false;
+    return EXCHANGE_NO_ANSWER;
 }
 
-bool EverbluCyble::tryFrequency(float freqMhz)
+ExchangeOutcome EverbluCyble::tryFrequency(float freqMhz)
 {
     LOG("[Everblu] --> Testing frequency: %.4f MHz\n", freqMhz);
     _cc1101->setFrequency(freqMhz);
@@ -482,24 +638,86 @@ bool EverbluCyble::tryFrequency(float freqMhz)
 
 bool EverbluCyble::decodeBufferReceived(const uint8_t *decoded_buffer, uint8_t size)
 {
+    // Everything below is bounded by the frame, not by the decode. Once the
+    // capture has slack the decoder overruns the frame into whatever follows it,
+    // so the decoded length is an upper bound on what arrived and byte 0 is the
+    // upper bound on what is meaningful. Take the smaller of the two: reading a
+    // field past L would be reading noise that happens to sit in the buffer.
+    uint8_t frameLen = radian_frame_length(decoded_buffer, size);
+
     // Indices are offsets, so the frame must be strictly longer than the last
     // one read. INDEX_NUM_OF_READINGS is 48, hence 49 bytes minimum.
-    if (size <= INDEX_NUM_OF_READINGS)
+    if (frameLen <= INDEX_NUM_OF_READINGS)
         return false;
 
-    currentIndex = (uint32_t)decoded_buffer[INDEX_CURRENT_INDEX] |
-                    ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 1] << 8) |
-                    ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 2] << 16) |
-                    ((uint32_t)decoded_buffer[INDEX_CURRENT_INDEX + 3] << 24);
+    currentIndex = readIndexAt(decoded_buffer, INDEX_CURRENT_INDEX);
     numReadings = decoded_buffer[INDEX_NUM_OF_READINGS];
     batteryLifetime = decoded_buffer[INDEX_BATTERY_LIFE_TIME];
     wakeupStart = decoded_buffer[INDEX_WAKEUP_START];
     wakeupStop = decoded_buffer[INDEX_WAKEUP_STOP];
 
+    readDay = decoded_buffer[INDEX_DATE];
+    readMonth = decoded_buffer[INDEX_DATE + 1];
+    readYear = decoded_buffer[INDEX_DATE + 2];
+    readWeekday = decoded_buffer[INDEX_WEEKDAY];
+    readHour = decoded_buffer[INDEX_TIME];
+    readMinute = decoded_buffer[INDEX_TIME + 1];
+    readSecond = decoded_buffer[INDEX_TIME + 2];
+
+    decodeMeterSerial(decoded_buffer, frameLen);
+
+    // Decoded only as far as the frame reaches, rather than refused outright:
+    // the history is the last thing in the response, so a frame long enough for
+    // an index but short of the history is exactly what a truncated capture
+    // produces. Reporting the index and saying how much history is missing beats
+    // discarding a good reading.
+    monthlyCount = 0;
+    for (uint8_t m = 0; m < MONTHLY_HISTORY_COUNT; m++)
+    {
+        uint16_t at = INDEX_MONTHLY_HISTORY + (uint16_t)m * 4;
+        // The last history entry ends at 121, two bytes short of L=124 where
+        // the checksum sits, so this never reads into the checksum either.
+        if (at + 4 > frameLen)
+            break;
+        monthlyIndex[m] = readIndexAt(decoded_buffer, (uint8_t)at);
+        monthlyCount++;
+    }
+
+    if (monthlyCount < MONTHLY_HISTORY_COUNT)
+        LOG("[Everblu] Frame carried %u of %u monthly indexes\n",
+            monthlyCount, MONTHLY_HISTORY_COUNT);
+
     return true;
 }
 
-bool EverbluCyble::getDataFromMeter()
+uint32_t EverbluCyble::readIndexAt(const uint8_t *buffer, uint8_t offset)
+{
+    return (uint32_t)buffer[offset] |
+           ((uint32_t)buffer[offset + 1] << 8) |
+           ((uint32_t)buffer[offset + 2] << 16) |
+           ((uint32_t)buffer[offset + 3] << 24);
+}
+
+void EverbluCyble::decodeMeterSerial(const uint8_t *buffer, uint8_t size)
+{
+    meterSerial[0] = '\0';
+
+    // Stored last character first and terminated by a NUL, so the characters to
+    // keep are those before the terminator, reversed.
+    uint8_t chars = 0;
+    while (chars < METER_SERIAL_MAX &&
+           INDEX_METER_SERIAL + chars < size &&
+           buffer[INDEX_METER_SERIAL + chars] != 0x00)
+    {
+        chars++;
+    }
+
+    for (uint8_t i = 0; i < chars; i++)
+        meterSerial[i] = (char)buffer[INDEX_METER_SERIAL + chars - 1 - i];
+    meterSerial[chars] = '\0';
+}
+
+ExchangeOutcome EverbluCyble::getDataFromMeter()
 {
     LOG("[Everblu] Retrieving data from meter\n");
 
@@ -512,19 +730,38 @@ bool EverbluCyble::getDataFromMeter()
     // Request data from meter
     LOG("[Everblu] Wake-up meter and request data\n");
     if (askWaterMeter() == false)
-        return false;
+        return EXCHANGE_NO_ANSWER;
 
     // Wait for meter ack
     LOG("[Everblu] Wait for meter ack\n");
-    if (wait_meter_ack() == false)
+    uint8_t *ackCapture = NULL;
+    uint32_t ackCaptureLen = 0;
+    if (wait_meter_ack(&ackCapture, &ackCaptureLen) == false)
     {
         LOG("[Everblu] No response from meter\n");
-        return false;
+        return EXCHANGE_NO_ANSWER;
     }
 
-    // Wait for meter response
     LOG("[Everblu] Wait for meter response\n");
-    return wait_meter_response();
+    bool complete = wait_meter_response();
+
+    // The exchange is over — this reader never sends a master ack — so nothing
+    // below is racing the meter.
+    bool ackIsOurs = false;
+    if (ackCapture != NULL)
+    {
+        ackIsOurs = ackIdentifiesOurMeter(ackCapture, ackCaptureLen);
+        free(ackCapture);
+    }
+
+    if (complete)
+        return EXCHANGE_COMPLETE;
+
+    // Only an ack we can attribute to our meter proves the frequency, and only
+    // that justifies giving up the search. Bytes we cannot attribute may be
+    // noise, so treat them as the silence they might be and keep sweeping —
+    // which is exactly what happened before any of this existed.
+    return ackIsOurs ? EXCHANGE_ACK_ONLY : EXCHANGE_NO_ANSWER;
 }
 
 bool EverbluCyble::askWaterMeter()
@@ -581,7 +818,7 @@ bool EverbluCyble::transmitWakeupAndRequest()
     return _cc1101->waitTxFifoDrained(TX_TMO);
 }
 
-bool EverbluCyble::wait_meter_ack()
+bool EverbluCyble::wait_meter_ack(uint8_t **capture, uint32_t *captureLen)
 {
     // The buffer holds the RAW oversampled bytes, not the decoded frame:
     // 4 samples per bit on the wire (see RADIAN_RX_BUFFER_SIZE).
@@ -593,50 +830,51 @@ bool EverbluCyble::wait_meter_ack()
         return false;
     }
 
-    bool isAck = (receiveData(RX_TMO, WATER_METER_ACK_LEN, rxBuffer, rxBufferSize) != 0);
+    uint32_t bytesReceived = receiveData(RX_TMO, WATER_METER_ACK_LEN, rxBuffer, rxBufferSize);
 
-    free(rxBuffer);
-
-    return isAck;
-}
-
-// THROWAWAY DIAGNOSTIC. Delete once the response layout is confirmed.
-//
-// Dumps the decoded meter response through LOG so it reaches MQTT. The
-// show_in_hex_* helpers in utils.cpp cannot be used: they print to Serial
-// directly, so nothing they emit ever leaves the device.
-//
-// Offsets are frame-absolute — the coordinate system INDEX_CURRENT_INDEX and
-// friends are written in. The tables in docs/cyble/images/meter_data*.jpg are
-// payload-relative and so read 15 lower throughout; the header line records
-// that base so the two are not confused. Those tables also claim the multi-byte
-// indexes are big endian, which is wrong: the code, and the tables' own worked
-// example, are little endian.
-static void dumpMeterResponse(const uint8_t *frame, uint8_t len)
-{
-    // Byte 0 is L, the frame's own total length. If it exceeds
-    // WATER_METER_RESPONSE_LEN then that constant is truncating every read.
-    LOG("[dump] L=0x%02X size=%u payload_base=15\n", len > 0 ? frame[0] : 0, len);
-
-    // 16 bytes is 48 characters, well inside the ~107 a log line has left once
-    // logPrintf has prefixed a timestamp. Longer lines are silently truncated.
-    char line[64];
-    // uint16_t, not uint8_t: len can reach 255, and offset += 16 would then
-    // wrap to 0 and loop forever.
-    for (uint16_t offset = 0; offset < len; offset += 16)
+    // Hand the capture on rather than examining it here. Decoding, the identity
+    // check and the diagnostic all belong after the response has been received:
+    // the meter is transmitting it while this function returns.
+    if (bytesReceived != 0 && capture != NULL)
     {
-        size_t used = 0;
-        for (uint8_t n = 0; n < 16 && (offset + n) < len; n++)
-        {
-            int written = snprintf(line + used, sizeof(line) - used,
-                                   "%02X ", frame[offset + n]);
-            if (written < 0 || (size_t)written >= sizeof(line) - used)
-                break;
-            used += written;
-        }
-        LOG("[dump] %03u: %s\n", offset, line);
+        *capture = rxBuffer;
+        if (captureLen != NULL)
+            *captureLen = bytesReceived;
     }
+    else
+    {
+        free(rxBuffer);
+    }
+
+    // Unchanged, deliberately: whether the exchange proceeds is still "did
+    // anything arrive". Nothing gates on the decode yet.
+    return bytesReceived != 0;
 }
+
+bool EverbluCyble::ackIdentifiesOurMeter(const uint8_t *raw, uint32_t rawLen)
+{
+    uint8_t *decoded = (uint8_t *)malloc(rawLen);
+    if (decoded == NULL)
+        return false;
+    memset(decoded, 0, rawLen);
+
+    uint8_t len = decode_4bitpbit_serial(raw, rawLen, decoded);
+
+    bool ours = len >= IDENTITY_MIN_LEN &&
+                decoded[INDEX_CONTROL] == CONTROL_ACKNOWLEDGE &&
+                decoded[INDEX_SENDER] == ADDRESS_PREFIX &&
+                decoded[INDEX_SENDER + 1] == _year &&
+                decoded[INDEX_SENDER + 2] == (uint8_t)((_serial & 0x00FF0000) >> 16) &&
+                decoded[INDEX_SENDER + 3] == (uint8_t)((_serial & 0x0000FF00) >> 8) &&
+                decoded[INDEX_SENDER + 4] == (uint8_t)(_serial & 0x000000FF);
+
+    if (!ours)
+        LOG("[Everblu] Ack did not identify our meter\n");
+
+    free(decoded);
+    return ours;
+}
+
 
 bool EverbluCyble::wait_meter_response()
 {
@@ -673,10 +911,6 @@ bool EverbluCyble::wait_meter_response()
     memset(meterData, 0, bytesReceived);
     meterDataSize = decode_4bitpbit_serial(rxBuffer, bytesReceived, meterData);
 
-    // Before the decode succeeds or fails: a frame too short to decode is
-    // exactly the one worth seeing.
-    dumpMeterResponse(meterData, meterDataSize);
-
     LOG("[Everblu] Decoding data received\n");
     success = decodeBufferReceived(meterData, meterDataSize);
 
@@ -688,6 +922,20 @@ bool EverbluCyble::wait_meter_response()
         LOG("Battery life remaining (months): %u\n", batteryLifetime);
         LOG("Meter wakeup time: %u\n", wakeupStart);
         LOG("Meter sleep time: %u\n", wakeupStop);
+        LOG("Meter serial: %s\n", meterSerial);
+        LOG("Meter clock: 20%02u-%02u-%02u %02u:%02u:%02u (weekday %u)\n",
+            readYear, readMonth, readDay, readHour, readMinute, readSecond, readWeekday);
+        // Four per line: thirteen lines of history would fill a third of the
+        // log queue on their own, and this is read as a series anyway.
+        for (uint8_t m = 0; m < monthlyCount; m += 4)
+        {
+            char line[LOG_LINE_MAX];
+            size_t used = 0;
+            for (uint8_t n = m; n < m + 4 && n < monthlyCount; n++)
+                used += snprintf(line + used, sizeof(line) - used, "M-%u=%u ",
+                                 MONTHLY_HISTORY_COUNT - n, monthlyIndex[n]);
+            LOG("Index history (litres): %s\n", line);
+        }
     }
     else
     {
@@ -743,6 +991,13 @@ void EverbluCyble::resetData()
     batteryLifetime = 0;
     wakeupStart = 0;
     wakeupStop = 0;
+
+    memset(monthlyIndex, 0, sizeof(monthlyIndex));
+    monthlyCount = 0;
+    readDay = readMonth = readYear = 0;
+    readWeekday = 0;
+    readHour = readMinute = readSecond = 0;
+    meterSerial[0] = '\0';
 }
 
 bool EverbluCyble::longWakeupPreamble(uint8_t chunksToSend)

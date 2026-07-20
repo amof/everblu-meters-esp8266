@@ -127,7 +127,8 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
     return bytepos + 2;
 }
 
-uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer)
+uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer,
+                               DecodeExitReason *exitReason, int *exitOffset)
 {
     uint8_t bit_pol = 0;
     uint8_t dest_bit_cnt = 0;
@@ -173,6 +174,10 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
 
                         if (dest_bit_cnt == 10 && !bit_pol)
                         {
+                            if (exitReason != NULL)
+                                *exitReason = DECODE_EXIT_STOP_BITS_LOW;
+                            if (exitOffset != NULL)
+                                *exitOffset = i;
                             return dest_byte_cnt;
                         }
                         if (dest_bit_cnt >= 11 && !bit_pol)
@@ -191,7 +196,57 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
         }
     }
 
+    if (exitReason != NULL)
+        *exitReason = DECODE_EXIT_SAMPLES_EXHAUSTED;
+    if (exitOffset != NULL)
+        *exitOffset = l_total_byte;
+
     return dest_byte_cnt;
+}
+
+uint8_t radian_frame_length(const uint8_t *frame, uint8_t decodedSize)
+{
+    if (frame == NULL || decodedSize == 0)
+        return 0;
+
+    uint8_t declared = frame[0];
+
+    // Below 3 there is no room for a length byte and a checksum, so L is not a
+    // length at all — a frame that starts with garbage, which is what a decode
+    // that never synchronised produces.
+    if (declared < 3)
+        return decodedSize;
+
+    return declared < decodedSize ? declared : decodedSize;
+}
+
+size_t base64_encode(const uint8_t *in, size_t inLen, char *out, size_t outSize)
+{
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    // 4 characters per 3 input bytes, rounded up, plus the terminator.
+    size_t needed = ((inLen + 2) / 3) * 4 + 1;
+    if (out == NULL || outSize < needed)
+        return 0;
+
+    size_t o = 0;
+    for (size_t i = 0; i < inLen; i += 3)
+    {
+        uint32_t group = (uint32_t)in[i] << 16;
+        if (i + 1 < inLen)
+            group |= (uint32_t)in[i + 1] << 8;
+        if (i + 2 < inLen)
+            group |= (uint32_t)in[i + 2];
+
+        out[o++] = alphabet[(group >> 18) & 0x3F];
+        out[o++] = alphabet[(group >> 12) & 0x3F];
+        out[o++] = (i + 1 < inLen) ? alphabet[(group >> 6) & 0x3F] : '=';
+        out[o++] = (i + 2 < inLen) ? alphabet[group & 0x3F] : '=';
+    }
+
+    out[o] = '\0';
+    return o;
 }
 
 void show_in_hex_array(uint8_t *buffer, uint32_t len)

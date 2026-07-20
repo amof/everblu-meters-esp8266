@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <utils.h>
+#include <everblu_log.h>
 
 FakeSerial Serial;
 // Nothing here touches SPI, but cc1101.cpp is linked into every test binary in
@@ -146,6 +147,100 @@ void test_decoder_round_trips_frame_body(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(&frame[1], &decoded[1], sizeof(frame) - 2);
 }
 
+// A capture that decodes to the wrong bytes is worse than no capture: it would
+// be checked in as a fixture and every later decoder conclusion drawn from it.
+// These are the RFC 4648 vectors, covering all three padding cases.
+void test_base64_encodes_known_vectors(void)
+{
+    char out[8];
+
+    TEST_ASSERT_EQUAL_UINT32(4, base64_encode((const uint8_t *)"Man", 3, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("TWFu", out);
+
+    TEST_ASSERT_EQUAL_UINT32(4, base64_encode((const uint8_t *)"Ma", 2, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("TWE=", out);
+
+    TEST_ASSERT_EQUAL_UINT32(4, base64_encode((const uint8_t *)"M", 1, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("TQ==", out);
+}
+
+// High bytes exercise the far end of the alphabet, which a text-only vector
+// never reaches — and a radio capture is mostly high bytes.
+void test_base64_encodes_binary_bytes(void)
+{
+    const uint8_t raw[] = {0xFF, 0xEF, 0xBE};
+    char out[8];
+
+    TEST_ASSERT_EQUAL_UINT32(4, base64_encode(raw, sizeof(raw), out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("/+++", out);
+}
+
+// Refuses rather than truncating: half a capture would decode to a frame that
+// was never transmitted.
+void test_base64_refuses_a_buffer_that_is_too_small(void)
+{
+    char out[4]; // needs 5 for one group plus terminator
+
+    TEST_ASSERT_EQUAL_UINT32(0, base64_encode((const uint8_t *)"Man", 3, out, sizeof(out)));
+}
+
+// The real case: a full response capture must fit the buffer the log module
+// sizes for it, or captures silently stop being published.
+void test_base64_response_capture_fits_the_publish_buffer(void)
+{
+    uint8_t raw[684];
+    char out[CAPTURE_B64_MAX];
+    memset(raw, 0xA5, sizeof(raw));
+
+    TEST_ASSERT_EQUAL_UINT32(912, base64_encode(raw, sizeof(raw), out, sizeof(out)));
+}
+
+// REGRESSION. The checksum must be taken over the frame's declared length, not
+// over however many bytes the decoder produced. Once the capture has slack the
+// decoder overruns the frame into the noise behind it, and summing to the
+// decoded length folds that noise in — failing a frame that is perfectly good,
+// on the one criterion the reader uses to accept a reading.
+void test_frame_length_is_bounded_by_the_declared_length(void)
+{
+    // The wiki ack, complete with its checksum, followed by post-frame noise of
+    // exactly the kind a roomy capture decodes.
+    uint8_t frame[24] = {0x12, 0x06, 0x00, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0x00,
+                         0x45, 0x10, 0x01, 0xE2, 0x40, 0x00, 0x0A, 0x90, 0x9E,
+                         0xFF, 0x3C, 0xA5, 0x00, 0xFF, 0x17};
+
+    TEST_ASSERT_EQUAL_UINT8(18, radian_frame_length(frame, sizeof(frame)));
+
+    // Summed to the declared length the checksum is the wiki's; summed to the
+    // decoded length it is not, which is the bug this guards.
+    uint8_t n = radian_frame_length(frame, sizeof(frame));
+    TEST_ASSERT_EQUAL_HEX16(0x909E, crc_kermit(frame, n - 2));
+    TEST_ASSERT_NOT_EQUAL(0x909E, crc_kermit(frame, sizeof(frame) - 2));
+}
+
+// The other direction: a short capture decodes fewer bytes than L, and the
+// frame length can never claim more data than actually arrived.
+void test_frame_length_never_exceeds_what_was_decoded(void)
+{
+    // The wiki ack again, one byte short of what its own L declares — the shape
+    // a capture with too few samples produces.
+    uint8_t truncated[17] = {0x12, 0x06, 0x00, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0x00,
+                             0x45, 0x10, 0x01, 0xE2, 0x40, 0x00, 0x0A, 0x90};
+
+    // L says 18, only 17 arrived: the checksum is simply not reachable.
+    TEST_ASSERT_EQUAL_UINT8(17, radian_frame_length(truncated, sizeof(truncated)));
+}
+
+// A decode that never synchronised puts garbage in byte 0. Falling back to the
+// decoded size keeps the caller's bounds checks honest instead of trusting a
+// length that means nothing.
+void test_frame_length_falls_back_when_L_is_not_a_length(void)
+{
+    uint8_t garbage[8] = {0x00, 0xFF, 0xFF, 0x12, 0x34, 0x56, 0x78, 0x9A};
+
+    TEST_ASSERT_EQUAL_UINT8(8, radian_frame_length(garbage, sizeof(garbage)));
+    TEST_ASSERT_EQUAL_UINT8(0, radian_frame_length(garbage, 0));
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -158,5 +253,12 @@ int main(int, char **)
     RUN_TEST(test_encoded_length_is_twelve_bits_per_byte);
     RUN_TEST(test_encoding_inserts_start_and_stop_bits);
     RUN_TEST(test_decoder_round_trips_frame_body);
+    RUN_TEST(test_base64_encodes_known_vectors);
+    RUN_TEST(test_base64_encodes_binary_bytes);
+    RUN_TEST(test_base64_refuses_a_buffer_that_is_too_small);
+    RUN_TEST(test_base64_response_capture_fits_the_publish_buffer);
+    RUN_TEST(test_frame_length_is_bounded_by_the_declared_length);
+    RUN_TEST(test_frame_length_never_exceeds_what_was_decoded);
+    RUN_TEST(test_frame_length_falls_back_when_L_is_not_a_length);
     return UNITY_END();
 }

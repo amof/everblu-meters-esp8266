@@ -86,10 +86,28 @@ the data, which would explain why it has never mattered — but that is inferenc
 not evidence, and prefixing the stream with idle bits does not reproduce the
 conditions, it trips the decoder's end-of-frame early return instead.
 
-Settling it needs a real oversampled buffer captured off a live meter, checked in
-as a fixture. Until then the decoder test is a characterisation test over the
-17 bytes that do round-trip, labelled as such in the source so nobody mistakes it
-for a proof of correctness.
+Settling it needs a real oversampled buffer captured off a live meter. Until
+then the decoder test is a characterisation test over the 17 bytes that do
+round-trip, labelled as such in the source so nobody mistakes it for a proof of
+correctness.
+
+That buffer cannot be checked in. A capture is raw oversampled bits and looks
+opaque, but it decodes to the meter's radio address, its serial and thirteen
+months of consumption history: enough for anyone in range to interrogate that
+meter over the air, and enough to infer when the household was empty. In a
+public repository that is a disclosure, not a fixture. Captures are therefore
+gitignored under `test/fixtures/`, and the tests that read one live only in the
+working tree of whoever took it.
+
+The cost is real and worth stating: the RX-side regression tests do not run in
+a clone, so the timing measurement that sized `RADIAN_FRAME_SIZE` — 11.4 bit
+periods per byte, against the 11 originally assumed — is recorded here in prose
+rather than asserted in CI. Anyone reproducing it needs their own meter and
+their own capture, which `scripts/decode_capture.py` turns into the same fixture
+shape. Synthesising a substitute was considered and rejected: a capture
+re-encoded through our own encoder would confirm this codebase's assumptions
+about the wire rather than test them, which is the specific failure this ADR
+exists to avoid.
 
 One on-hardware read against a live meter therefore remains the final gate, and
 no amount of green on the desktop substitutes for it.

@@ -85,3 +85,12 @@ Mkfile.old
 dkms.conf
 
 cc1101.pdf
+# Real meter captures and monitor logs. A capture is raw oversampled bits, so it
+# looks opaque, but it decodes to the meter's radio address, its serial, and
+# thirteen months of consumption history — enough to interrogate that meter over
+# the air and to infer when the household was away. Kept local deliberately; see
+# ADR-0003 on what that costs the test suite.
+test/fixtures/
+logs/
+log.txt
+log_mqtt.txt

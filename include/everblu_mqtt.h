@@ -14,6 +14,12 @@
 constexpr const char *indexStateTopic = "everblu/cyble/index";
 constexpr const char *batteryStateTopic = "everblu/cyble/battery";
 constexpr const char *readingsStateTopic = "everblu/cyble/readings";
+// The index as it stood at the end of last month, and everything else the meter
+// says about itself: the other twelve monthly indexes, its own clock and its own
+// serial. One sensor with attributes rather than thirteen entities, because
+// "M-1" names a different month every month while the sensor does not.
+constexpr const char *previousIndexStateTopic = "everblu/cyble/previous_index";
+constexpr const char *meterAttributesTopic = "everblu/cyble/meter/attributes";
 // The outcome of the most recent interrogation, or what one is doing right now.
 // The full vocabulary, since it is spread across several call sites:
 //   ok             a read completed and the values above were updated
@@ -23,6 +29,7 @@ constexpr const char *readingsStateTopic = "everblu/cyble/readings";
 //   asleep         asked to read outside the meter's wakeup window
 //   no_response    the meter did not answer on any frequency tried
 //   not_provisioned  as above, but no frequency has ever been found
+//   unreadable     the meter answered, but its response could not be decoded
 //   gave_up        the day's attempt budget is spent; waiting for tomorrow
 //   no_clock       asked to transmit before NTP had set the clock
 constexpr const char *statusStateTopic = "everblu/cyble/status";
@@ -32,6 +39,15 @@ constexpr const char *statusStateTopic = "everblu/cyble/status";
 // actually answered, which is what "is the reader still working" depends on.
 constexpr const char *lastReadStateTopic = "everblu/cyble/last_read";
 constexpr const char *scheduleTimeStateTopic = "everblu/cyble/schedule/time";
+// The frequency a single-attempt test will use, in MHz. Settable, and separate
+// from the working frequency in the meter profile: this one is aimed by hand.
+constexpr const char *testFrequencyStateTopic = "everblu/cyble/test_frequency";
+constexpr const char *testFrequencySetTopic = "everblu/cyble/test_frequency/set";
+constexpr const char *testFrequencyCommandTopic = "everblu/cyble/command/test_frequency";
+// Raw oversampled radio captures, base64, retained: one topic per frame so an
+// ack does not overwrite the response it preceded. Retained because a capture
+// is worth having when you next connect, not only if you were already watching.
+constexpr const char *captureTopicPrefix = "everblu/cyble/capture/";
 // Verdict of the wiring check: "ok", "spi_failed" or "gdo0_failed". Separate
 // from status because the two have different lifetimes — status is the latest
 // event, wiring fitness is sticky. Writing one into the other would destroy the
@@ -77,6 +93,9 @@ constexpr const char *buttonReadConfigTopic = "homeassistant/button/everblucyble
 constexpr const char *buttonSweepConfigTopic = "homeassistant/button/everblucyble01a/sweep/config";
 constexpr const char *wiringConfigTopic = "homeassistant/sensor/everblucyble01a/wiring/config";
 constexpr const char *buttonWiringConfigTopic = "homeassistant/button/everblucyble01a/wiring/config";
+constexpr const char *previousIndexConfigTopic = "homeassistant/sensor/everblucyble01a/previous_index/config";
+constexpr const char *testFrequencyConfigTopic = "homeassistant/number/everblucyble01a/test_frequency/config";
+constexpr const char *buttonTestFrequencyConfigTopic = "homeassistant/button/everblucyble01a/test_frequency/config";
 
 // Availability is per-entity in Home Assistant, so every payload has to carry
 // this too — an entity without it is never greyed out, however dead the device.
@@ -199,5 +218,42 @@ constexpr const char *buttonSweepConfigPayload =
     "\"command_topic\": \"everblu/cyble/command/sweep\","
     "\"entity_category\": \"config\","
     "\"icon\": \"mdi:radar\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// Last month's closing index. total_increasing like the current index, since it
+// is the same cumulative counter sampled a month earlier — not a consumption.
+constexpr const char *previousIndexConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Previous Month Index\","
+    "\"unique_id\": \"everblu_cyble_previous_index\","
+    "\"state_topic\": \"everblu/cyble/previous_index\","
+    "\"json_attributes_topic\": \"everblu/cyble/meter/attributes\","
+    "\"device_class\": \"water\","
+    "\"state_class\": \"total_increasing\","
+    "\"unit_of_measurement\": \"L\","
+    "\"icon\": \"mdi:calendar-arrow-left\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// Aim a single attempt by hand. Bounds and step match the sweep's own band and
+// 2kHz grid, so the entity cannot ask for a frequency the reader would refuse.
+constexpr const char *testFrequencyConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Test Frequency\","
+    "\"unique_id\": \"everblu_cyble_test_frequency\","
+    "\"command_topic\": \"everblu/cyble/test_frequency/set\","
+    "\"state_topic\": \"everblu/cyble/test_frequency\","
+    "\"min\": 433.76, \"max\": 433.89, \"step\": 0.002,"
+    "\"mode\": \"box\","
+    "\"unit_of_measurement\": \"MHz\","
+    "\"entity_category\": \"diagnostic\","
+    "\"icon\": \"mdi:sine-wave\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// One exchange at the frequency above, never a sweep. A failed sweep costs the
+// meter 61 wake-up preambles; this costs it one.
+constexpr const char *buttonTestFrequencyConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Test Frequency Now\","
+    "\"unique_id\": \"everblu_cyble_test_frequency_now\","
+    "\"command_topic\": \"everblu/cyble/command/test_frequency\","
+    "\"entity_category\": \"diagnostic\","
+    "\"icon\": \"mdi:target-variant\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 #endif // EVERBLU_MQTT_H

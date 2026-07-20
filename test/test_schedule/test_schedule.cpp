@@ -133,6 +133,78 @@ void test_nothing_is_attempted_before_the_scheduled_time(void)
     TEST_ASSERT_FALSE(performed);
 }
 
+/**
+ * Bring up a reader that already knows its meter's frequency.
+ *
+ * The record is seeded straight into flash, so init() sees exactly what a
+ * reboot sees. Magic and schema are duplicated from everblu_cyble.cpp; if this
+ * stops compiling or the reader comes up unprovisioned, the on-flash layout
+ * changed and this test wants to know.
+ */
+static EverbluCyble *bringUpProvisioned(float frequency)
+{
+    MeterProfile stored;
+    memset(&stored, 0, sizeof(stored));
+    stored.magic = 0x45564231UL; // "EVB1"
+    stored.schema = 1;
+    stored.frequency = frequency;
+    stored.wakeupStart = 6;
+    stored.wakeupStop = 18;
+
+    EEPROM.begin(64);
+    EEPROM.put(0, stored);
+    EEPROM.commit();
+
+    static EverbluCyble *reader = NULL;
+    delete reader;
+    reader = new EverbluCyble(TEST_GDO0_PIN, TEST_METER_YEAR, TEST_METER_SERIAL);
+    reader->init();
+    reader->setScheduledTime(SCHEDULE_HOUR, SCHEDULE_MINUTE);
+    return reader;
+}
+
+/**
+ * A failed automatic read must not escalate to a full sweep.
+ *
+ * Every frequency tried costs the meter a ~2 second wake-up preamble, and the
+ * meter is battery powered and answers a limited number of times. Escalating
+ * cost 69 preambles per failed read against a budget of five reads a day: about
+ * twelve minutes of forced wake-ups daily, enough to stop a meter answering at
+ * all — so the recovery attempt became the thing preventing recovery.
+ *
+ * A provisioned reader may try its stored frequency and the re-centring sweep
+ * that tracks crystal drift, and nothing more. Per ADR-0002 the full sweep
+ * exists for crystal error, which drifts slowly; a reader that hears nothing
+ * across seven frequencies has a silent meter, not a crystal that moved 60kHz.
+ */
+void test_a_failed_automatic_read_does_not_escalate_to_a_full_sweep(void)
+{
+    EverbluCyble *reader = bringUpProvisioned(433.79f);
+    fakeChip().frequencyWrites = 0;
+
+    bool performed = false;
+    MeterReadResult result = reader->readIfDue(localTime(MONDAY, SCHEDULE_HOUR, 0), &performed);
+
+    TEST_ASSERT_TRUE(performed);
+    TEST_ASSERT_EQUAL(METER_NO_RESPONSE, result);
+
+    // 1 at the stored frequency, then +/-3 steps either side: 1 + 7 = 8.
+    // A full sweep would be 61 more.
+    TEST_ASSERT_LESS_OR_EQUAL_UINT16(8, fakeChip().frequencyWrites);
+}
+
+/** The full sweep is still available when asked for by hand. */
+void test_a_requested_sweep_still_searches_the_whole_band(void)
+{
+    EverbluCyble *reader = bringUpProvisioned(433.79f);
+    fakeChip().frequencyWrites = 0;
+
+    reader->sweepForMeter(localTime(MONDAY, SCHEDULE_HOUR, 0));
+
+    // Far more than the 8 an automatic read is allowed to spend.
+    TEST_ASSERT_GREATER_THAN_UINT16(50, fakeChip().frequencyWrites);
+}
+
 void test_a_due_reading_is_attempted(void)
 {
     // The baseline the rest of the file is defined against: without this, every
@@ -294,6 +366,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_window_edges);
     RUN_TEST(test_nothing_is_attempted_before_the_scheduled_time);
     RUN_TEST(test_a_due_reading_is_attempted);
+    RUN_TEST(test_a_failed_automatic_read_does_not_escalate_to_a_full_sweep);
+    RUN_TEST(test_a_requested_sweep_still_searches_the_whole_band);
     RUN_TEST(test_sunday_ticks_are_not_attempts);
     RUN_TEST(test_ticks_after_the_window_closes_are_not_attempts);
     RUN_TEST(test_a_reading_missed_on_sunday_is_attempted_on_monday);
