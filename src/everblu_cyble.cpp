@@ -1,4 +1,3 @@
-#include "EEPROM.h"
 #include "everblu_cyble.h"
 #include "cc1101_registers.h"
 #include "utils.h"
@@ -161,7 +160,7 @@ bool EverbluCyble::init()
     // just because the reader was working the day it was assembled.
     _wiring = _cc1101->checkWiring();
 
-    EEPROM.begin(EEPROM_SIZE);
+    _store.begin(EEPROM_SIZE);
 
     loadSchedule();
     LOG("[Everblu] Automatic reading at %02u:%02u local\n", _schedule.hour, _schedule.minute);
@@ -177,12 +176,9 @@ bool EverbluCyble::init()
 
 bool EverbluCyble::loadProfile()
 {
-    EEPROM.get(EEPROM_PROFILE_ADDR, _profile);
-
-    // An erased flash sector reads as 0xFF, which as a float is NaN. Feeding
-    // that to the synthesizer silently programs 0 Hz, so the record must prove
-    // it was written by us before any of it is trusted.
-    if (_profile.magic != EEPROM_MAGIC || _profile.schema != EEPROM_SCHEMA)
+    // load() rejects an erased sector (0xFF everywhere, which as a float is NaN
+    // and would silently program 0 Hz) and any record from an older layout.
+    if (!_store.load(EEPROM_PROFILE_ADDR, _profile, EEPROM_MAGIC, EEPROM_SCHEMA))
         return false;
 
     // Second line of defence: a corrupted record must not steer the radio
@@ -198,15 +194,12 @@ bool EverbluCyble::loadProfile()
 
 void EverbluCyble::saveProfile(float frequency)
 {
-    _profile.magic = EEPROM_MAGIC;
-    _profile.schema = EEPROM_SCHEMA;
     _profile.frequency = frequency;
     // The meter reports its own wakeup window; prefer it over our default.
     _profile.wakeupStart = wakeupStart;
     _profile.wakeupStop = wakeupStop;
 
-    EEPROM.put(EEPROM_PROFILE_ADDR, _profile);
-    EEPROM.commit();
+    _store.save(EEPROM_PROFILE_ADDR, _profile, EEPROM_MAGIC, EEPROM_SCHEMA);
     _provisioned = true;
 
     LOG("[Everblu] Profile saved: %.4f MHz, awake %uh-%uh\n",
@@ -215,28 +208,23 @@ void EverbluCyble::saveProfile(float frequency)
 
 void EverbluCyble::loadSchedule()
 {
-    EEPROM.get(EEPROM_SCHEDULE_ADDR, _schedule);
-
-    // Erased flash or an older layout: fall back to the documented default
-    // rather than reading garbage hours out of 0xFF bytes.
-    if (_schedule.magic != SCHEDULE_MAGIC ||
-        _schedule.schema != SCHEDULE_SCHEMA ||
+    // Erased flash, an older layout, or hours that are not hours: fall back to
+    // the documented default rather than reading garbage out of 0xFF bytes.
+    if (!_store.load(EEPROM_SCHEDULE_ADDR, _schedule, SCHEDULE_MAGIC, SCHEDULE_SCHEMA) ||
         _schedule.hour > 23 || _schedule.minute > 59)
     {
-        _schedule.magic = SCHEDULE_MAGIC;
-        _schedule.schema = SCHEDULE_SCHEMA;
         _schedule.hour = DEFAULT_READING_HOUR;
         _schedule.minute = 0;
         _schedule.lastReadAt = 0;
+        // Left unsaved: the default takes effect in RAM now, and the tag is
+        // stamped onto flash by the first saveSchedule() a read or a setting
+        // triggers.
     }
 }
 
 void EverbluCyble::saveSchedule()
 {
-    _schedule.magic = SCHEDULE_MAGIC;
-    _schedule.schema = SCHEDULE_SCHEMA;
-    EEPROM.put(EEPROM_SCHEDULE_ADDR, _schedule);
-    EEPROM.commit();
+    _store.save(EEPROM_SCHEDULE_ADDR, _schedule, SCHEDULE_MAGIC, SCHEDULE_SCHEMA);
 }
 
 bool EverbluCyble::setScheduledTime(uint8_t hour, uint8_t minute)
@@ -332,9 +320,7 @@ MeterReadResult EverbluCyble::readIfDue(time_t now, bool *performed)
 
 void EverbluCyble::forgetMeter()
 {
-    memset(&_profile, 0, sizeof(_profile));
-    EEPROM.put(EEPROM_PROFILE_ADDR, _profile);
-    EEPROM.commit();
+    _store.clear(EEPROM_PROFILE_ADDR, _profile);
     _provisioned = false;
     LOG("[Everblu] Meter profile cleared\n");
 }

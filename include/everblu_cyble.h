@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <time.h>
 #include <cc1101.h>
+#include "eeprom_store.h"
 
 /**
  * Outcome of an attempt to read the meter.
@@ -218,6 +219,7 @@ private:
     // MQTT, which can dispatch a command that calls straight back in here.
     bool _busy;
     CC1101 *_cc1101;
+    EepromStore _store;
     void (*_betweenAttempts)(void);
 
     /**
