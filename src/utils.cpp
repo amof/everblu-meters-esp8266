@@ -127,8 +127,7 @@ uint32_t encode2serial_1_3(uint8_t *inputBuffer, uint32_t inputBufferLen, uint8_
     return bytepos + 2;
 }
 
-uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer,
-                               DecodeExitReason *exitReason, int *exitOffset)
+uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_t *decoded_buffer)
 {
     uint8_t bit_pol = 0;
     uint8_t dest_bit_cnt = 0;
@@ -172,14 +171,10 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
 
                         dest_bit_cnt++;
 
+                        // Bit 10 of a byte reading low is the frame-end marker:
+                        // the transmission has stopped, so decoding is complete.
                         if (dest_bit_cnt == 10 && !bit_pol)
-                        {
-                            if (exitReason != NULL)
-                                *exitReason = DECODE_EXIT_STOP_BITS_LOW;
-                            if (exitOffset != NULL)
-                                *exitOffset = i;
                             return dest_byte_cnt;
-                        }
                         if (dest_bit_cnt >= 11 && !bit_pol)
                         {
                             dest_bit_cnt = 0;
@@ -196,11 +191,7 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
         }
     }
 
-    if (exitReason != NULL)
-        *exitReason = DECODE_EXIT_SAMPLES_EXHAUSTED;
-    if (exitOffset != NULL)
-        *exitOffset = l_total_byte;
-
+    // Ran off the end of the capture before the frame-end marker.
     return dest_byte_cnt;
 }
 
@@ -259,26 +250,4 @@ size_t base64_encode(const uint8_t *in, size_t inLen, char *out, size_t outSize)
 
     out[o] = '\0';
     return o;
-}
-
-void show_in_hex_array(uint8_t *buffer, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; i++)
-    {
-        if (i > 0 && i % 16 == 0)
-        {
-            Serial.println(); // New line after every 16 bytes
-        }
-        Serial.printf("0x%02X, ", buffer[i]);
-    }
-    Serial.println(); // Final newline
-}
-
-void show_in_hex_one_line(uint8_t *buffer, size_t len)
-{
-    size_t i = 0;
-    for (i = 0; i < len; i++)
-    {
-        Serial.printf("%02X ", buffer[i]);
-    }
 }

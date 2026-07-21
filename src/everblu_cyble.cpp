@@ -456,14 +456,9 @@ MeterReadResult EverbluCyble::readMeterInternal(time_t now)
 
         LOG("[Everblu] No answer, re-centring around the known frequency\n");
         ExchangeOutcome recentred = sweepAround(_profile.frequency, FREQ_STEPS_RECENTER, &found);
-        if (recentred == EXCHANGE_COMPLETE)
-        {
-            saveProfile(found); // Track the drift
-            recordSuccessfulRead(now);
-            return METER_READ_OK;
-        }
-        if (recentred == EXCHANGE_ACK_ONLY)
-            return METER_UNREADABLE;
+        // A reading here saves the re-centred frequency, tracking the drift.
+        if (recentred != EXCHANGE_NO_ANSWER)
+            return completeRead(recentred, found, now);
 
         // Deliberately no full sweep here. Escalating cost 69 wake-up preambles
         // per failed read, and the daily budget allows five of those: about
@@ -487,16 +482,7 @@ MeterReadResult EverbluCyble::readMeterInternal(time_t now)
 
     LOG("[Everblu] Full sweep\n");
     ExchangeOutcome swept = sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found);
-    if (swept == EXCHANGE_COMPLETE)
-    {
-        saveProfile(found);
-        recordSuccessfulRead(now);
-        return METER_READ_OK;
-    }
-    if (swept == EXCHANGE_ACK_ONLY)
-        return METER_UNREADABLE;
-
-    return METER_NO_RESPONSE;
+    return completeRead(swept, found, now);
 }
 
 MeterReadResult EverbluCyble::testFrequency(time_t now, float freqMhz)
@@ -527,24 +513,11 @@ MeterReadResult EverbluCyble::testFrequency(time_t now, float freqMhz)
     {
         // Exactly one exchange. The whole point is to cost the meter a single
         // wake-up preamble instead of the 61 a failed sweep spends, so nothing
-        // here falls back to sweeping when it fails.
+        // here falls back to sweeping when it fails. A full reading is this
+        // project's own proof that a frequency works, so completeRead keeps it
+        // even from a hand-aimed attempt.
         LOG("[Everblu] Single attempt at %.4f MHz\n", freqMhz);
-        switch (tryFrequency(freqMhz))
-        {
-        case EXCHANGE_COMPLETE:
-            // A full reading is this project's own proof that a frequency
-            // works, so it is worth keeping even from a hand-aimed attempt.
-            saveProfile(freqMhz);
-            recordSuccessfulRead(now);
-            result = METER_READ_OK;
-            break;
-        case EXCHANGE_ACK_ONLY:
-            result = METER_UNREADABLE;
-            break;
-        default:
-            result = METER_NO_RESPONSE;
-            break;
-        }
+        result = completeRead(tryFrequency(freqMhz), freqMhz, now);
     }
 
     _busy = false;
@@ -565,22 +538,28 @@ MeterReadResult EverbluCyble::sweepForMeterInternal(time_t now)
     // for when the stored one is believed wrong.
     LOG("[Everblu] Full sweep requested\n");
     ExchangeOutcome swept = sweepAround(FREQ_CENTER, FREQ_STEPS_FULL, &found);
-    if (swept == EXCHANGE_COMPLETE)
-    {
-        saveProfile(found);
-        recordSuccessfulRead(now);
-        return METER_READ_OK;
-    }
-    if (swept == EXCHANGE_ACK_ONLY)
-        return METER_UNREADABLE;
-
-    return METER_NO_RESPONSE;
+    return completeRead(swept, found, now);
 }
 
 void EverbluCyble::recordSuccessfulRead(time_t now)
 {
     _schedule.lastReadAt = now;
     saveSchedule();
+}
+
+MeterReadResult EverbluCyble::completeRead(ExchangeOutcome outcome, float foundMhz, time_t now)
+{
+    switch (outcome)
+    {
+    case EXCHANGE_COMPLETE:
+        saveProfile(foundMhz);
+        recordSuccessfulRead(now);
+        return METER_READ_OK;
+    case EXCHANGE_ACK_ONLY:
+        return METER_UNREADABLE;
+    default:
+        return METER_NO_RESPONSE;
+    }
 }
 
 ExchangeOutcome EverbluCyble::sweepAround(float centerMhz, uint16_t maxSteps, float *foundMhz)
@@ -1051,18 +1030,6 @@ void EverbluCyble::createRadianMasterRequest(uint8_t *outputBuffer)
     memcpy(outputBuffer, synch_pattern, sizeof(synch_pattern));
     // LOG("[Everblu] Encoding\n");
     encode2serial_1_3(to_encode, sizeof(to_encode), &outputBuffer[sizeof(synch_pattern)]);
-}
-
-bool EverbluCyble::isLookLikeRadianFrame(const uint8_t *buffer, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; ++i)
-    {
-        if (buffer[i] == 0xFF)
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 void EverbluCyble::initializeForSyncPatternReception()

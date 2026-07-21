@@ -239,6 +239,15 @@ private:
     void loadSchedule();
     void saveSchedule();
     void recordSuccessfulRead(time_t now);
+    /**
+     * @brief Turn the outcome of a search into a read result.
+     *
+     * A full reading persists the working frequency and the read; an ack-only
+     * outcome reports the meter as unreadable (it answered, so the frequency is
+     * right); silence reports no response. @p foundMhz is the frequency that
+     * worked, saved only on a complete reading.
+     */
+    MeterReadResult completeRead(ExchangeOutcome outcome, float foundMhz, time_t now);
     /** Whether a successful read has already happened on the given local day. */
     bool alreadyReadToday(time_t now) const;
     /**
@@ -274,7 +283,6 @@ private:
 
     /** @brief Put the meter's own serial back into reading order. */
     void decodeMeterSerial(const uint8_t *buffer, uint8_t size);
-    bool isLookLikeRadianFrame(const uint8_t *buffer, uint32_t len);
     void initializeForSyncPatternReception();
     void initializeForDataReception();
     void restoreDefaultSettings();

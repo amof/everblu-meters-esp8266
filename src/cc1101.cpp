@@ -44,43 +44,6 @@ void CC1101::init(void)
 void CC1101::setFrequency(float freq)
 {
   configureRF_0(freq);
-  // calibrateAndCompensate();
-}
-
-void CC1101::printRegistersSettings(void)
-{
-  uint8_t config_reg_verify[CFG_REGISTER], Patable_verify[8];
-  uint8_t i;
-
-  memset(config_reg_verify, 0, CFG_REGISTER);
-  memset(Patable_verify, 0, 8);
-
-  readBurstReg(0, config_reg_verify, CFG_REGISTER); // reads all config registers from cc1100
-  readBurstReg(PATABLE_ADDR, Patable_verify, 8);    // reads output power settings from cc1100
-
-  // Print the header for config registers
-  LOG("Config Register in hex:\n");
-  LOG(" 0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
-
-  for (i = 0; i < CFG_REGISTER; i++) // Print each register value
-  {
-    if (i % 16 == 0 && i != 0)
-    {
-      LOG("\n"); // Print a new line every 16 values
-    }
-    LOG("%02X ", config_reg_verify[i]);
-  }
-  LOG("\n"); // End the line after printing all register values
-
-  // Print the PaTable header
-  LOG("PaTable:\n");
-
-  for (i = 0; i < 8; i++) // Print each PaTable value
-  {
-    LOG("%02X ", Patable_verify[i]);
-  }
-  LOG("\n"); // End the line after printing all PaTable values
-  delay(1);
 }
 
 ChipIdentity CC1101::readIdentity(void)
@@ -314,7 +277,6 @@ void CC1101::halRfWriteReg(uint8_t reg_addr, uint8_t value)
   tbuf[1] = value;
   uint8_t len = 2;
   spiTransfert(0, tbuf, len);
-  status_FIFO_FreeByte = tbuf[0] & 0x0F;
   status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x07);
 }
 
@@ -334,7 +296,6 @@ uint8_t CC1101::halRfReadReg(uint8_t spi_instr)
   // FIFO_BYTES_AVAILABLE. STATE is three bits, so masking four would fold
   // CHIP_RDYn into the state and make every comparison fail once the crystal
   // is not yet stable.
-  status_FIFO_ReadByte = rbuf[0] & 0x0F;
   status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x07);
   value = rbuf[1];
   return value;
@@ -346,8 +307,6 @@ void CC1101::writeCmd(uint8_t spi_instr)
   tbuf[0] = spi_instr | WRITE_SINGLE_BYTE;
   spiTransfert(0, tbuf, 1);
   // When writing a command strobe the chip status byte is returned on SO.
-  // On a write access FIFO_BYTES_AVAILABLE means free bytes in the TX FIFO.
-  status_FIFO_FreeByte = tbuf[0] & 0x0F;
   status_state = static_cast<ChipStatusState>((tbuf[0] >> 4) & 0x07);
 }
 
@@ -362,7 +321,6 @@ void CC1101::readBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
   {
     pArr[i] = rbuf[i + 1];
   }
-  status_FIFO_ReadByte = rbuf[0] & 0x0F;
   status_state = static_cast<ChipStatusState>((rbuf[0] >> 4) & 0x07);
 }
 
@@ -376,7 +334,6 @@ void CC1101::writeBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len)
     tbuf[i + 1] = pArr[i];
   }
   spiTransfert(0, tbuf, len + 1);
-  status_FIFO_FreeByte = tbuf[len] & 0x0F;
   status_state = static_cast<ChipStatusState>((tbuf[len] >> 4) & 0x07);
 }
 
@@ -445,42 +402,6 @@ void CC1101::reset(void)
   writeCmd(SFRX);
 
   delay(1);
-}
-
-void CC1101::calibrateAndCompensate(uint32_t timeoutMs)
-{
-  // Trigger calibration using the SCAL strobe
-  writeCmd(SCAL);
-
-  // Wait for calibration to complete (poll the FSCAL_DONE bit)
-  uint8_t marcstate = 0xFF;
-  uint32_t elapsedTime = 0;
-  while ((marcstate != MARCSTATE_IDLE) && (marcstate != RX_RX) && (elapsedTime < timeoutMs))
-  {
-    marcstate = halRfReadReg(MARCSTATE_ADDR); // Polling MARCSTATE
-    delay(1);
-    elapsedTime++;
-  }
-
-  if (elapsedTime >= timeoutMs)
-  {
-    LOG("[CC1101] TMO in calibrateAndCompensate\n");
-    return;
-  }
-
-  // Configure Frequency Offset Compensation (FOC)
-  // FOCCFG - Frequency Offset Compensation Configuration
-  // Enable frequency offset compensation with settings for maximum performance
-  // Bit 6-4: Frequency compensation loop gain = 1 (normal loop gain)
-  // Bit 3: No automatic freeze
-  // Bit 2: Automatic frequency compensation enabled
-  // Bit 1-0: No data rate offset compensation
-  halRfWriteReg(FOCCFG, 0x1D);
-
-  // Print calibration complete and FOC enabled message
-  LOG("Calibration complete, Frequency Offset Compensation enabled.\n");
-
-  delay(5);
 }
 
 void CC1101::configureRF_0(float freq)

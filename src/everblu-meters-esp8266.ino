@@ -238,16 +238,28 @@ void publishResult(MeterReadResult result)
 }
 
 /**
+ * @brief Refuse to transmit until NTP has set the clock.
+ *
+ * The wakeup-window check is the only thing preventing a pointless multi-minute
+ * sweep at night, and it is meaningless while the clock is still at the epoch.
+ */
+bool clockReady()
+{
+  if (cbtime_set)
+    return true;
+
+  Serial.println("Clock not synchronized yet, refusing to transmit");
+  mqtt.publish(statusStateTopic, "no_clock", true);
+  return false;
+}
+
+/**
  * @brief Read the meter now, whatever the schedule says.
  */
 void readNow()
 {
-  if (!cbtime_set)
-  {
-    Serial.println("Clock not synchronized yet, refusing to transmit");
-    mqtt.publish(statusStateTopic, "no_clock", true);
+  if (!clockReady())
     return;
-  }
 
   mqtt.publish(statusStateTopic, "reading", true);
   publishResult(cyble.readMeter(time(nullptr)));
@@ -270,12 +282,8 @@ void publishTestFrequency()
 
 void testFrequencyNow()
 {
-  if (!cbtime_set)
-  {
-    Serial.println("Clock not synchronized yet, refusing to transmit");
-    mqtt.publish(statusStateTopic, "no_clock", true);
+  if (!clockReady())
     return;
-  }
 
   mqtt.publish(statusStateTopic, "reading", true);
   publishResult(cyble.testFrequency(time(nullptr), testFrequencyMhz));
@@ -283,12 +291,8 @@ void testFrequencyNow()
 
 void sweepNow()
 {
-  if (!cbtime_set)
-  {
-    Serial.println("Clock not synchronized yet, refusing to transmit");
-    mqtt.publish(statusStateTopic, "no_clock", true);
+  if (!clockReady())
     return;
-  }
 
   mqtt.publish(statusStateTopic, "sweeping", true);
   cyble.forgetMeter();
@@ -361,33 +365,30 @@ void onConnectionEstablished()
   request_ntp_time();
 
   Serial.println("> Send MQTT config for HA.");
-  // Publish the discovery configuration messages
-  mqtt.publish(indexConfigTopic, indexConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(batteryConfigTopic, batteryConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(readingsConfigTopic, readingsConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(previousIndexConfigTopic, previousIndexConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(statusConfigTopic, statusConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(lastReadConfigTopic, lastReadConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(scheduleTimeConfigTopic, scheduleTimeConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(buttonReadConfigTopic, buttonReadConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(buttonSweepConfigTopic, buttonSweepConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(wiringConfigTopic, wiringConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(buttonWiringConfigTopic, buttonWiringConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(testFrequencyConfigTopic, testFrequencyConfigPayload, true);
-  delay(50); // Do not remove
-  mqtt.publish(buttonTestFrequencyConfigTopic, buttonTestFrequencyConfigPayload, true);
-  delay(50); // Do not remove
+  // Publish the discovery configuration messages. The delay between each paces
+  // the broker and must not be removed: publishing all of them back to back
+  // drops entities.
+  struct Discovery { const char *topic; const char *payload; };
+  static const Discovery discovery[] = {
+      {indexConfigTopic, indexConfigPayload},
+      {batteryConfigTopic, batteryConfigPayload},
+      {readingsConfigTopic, readingsConfigPayload},
+      {previousIndexConfigTopic, previousIndexConfigPayload},
+      {statusConfigTopic, statusConfigPayload},
+      {lastReadConfigTopic, lastReadConfigPayload},
+      {scheduleTimeConfigTopic, scheduleTimeConfigPayload},
+      {buttonReadConfigTopic, buttonReadConfigPayload},
+      {buttonSweepConfigTopic, buttonSweepConfigPayload},
+      {wiringConfigTopic, wiringConfigPayload},
+      {buttonWiringConfigTopic, buttonWiringConfigPayload},
+      {testFrequencyConfigTopic, testFrequencyConfigPayload},
+      {buttonTestFrequencyConfigTopic, buttonTestFrequencyConfigPayload},
+  };
+  for (const Discovery &entry : discovery)
+  {
+    mqtt.publish(entry.topic, entry.payload, true);
+    delay(50);
+  }
 
   // Reflect the stored schedule so the Home Assistant entity shows the value
   // actually in force rather than an empty state.

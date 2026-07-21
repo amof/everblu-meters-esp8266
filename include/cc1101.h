@@ -68,11 +68,6 @@ public:
    */
   uint32_t readFifoData(uint32_t timeoutMs, uint32_t totalSizeBytes, uint8_t *rxBuffer);
   /**
-   * @brief Print all the registers from CC1101
-   *
-   */
-  void printRegistersSettings(void);
-  /**
    * @brief Read and log the chip's part number and version.
    *
    * Returns them rather than only logging, because the wiring check judges on
@@ -192,8 +187,6 @@ public:
   void writeBurstReg(uint8_t spi_instr, uint8_t *pArr, uint8_t len);
 
   ChipStatusState status_state = CHIP_SS_IDLE;
-  uint8_t status_FIFO_FreeByte = 0;
-  uint8_t status_FIFO_ReadByte = 0;
   uint8_t lqi = 0;
   uint8_t freqEst = 0;
   int8_t rssiDbm = 0; // Signed: every real RSSI reading is negative
@@ -219,12 +212,6 @@ private:
    * @return false on timeout
    */
   bool waitMisoLow(uint32_t timeoutMs);
-  /**
-   * @brief Write calibration
-   *
-   * @param timeoutMs
-   */
-  void calibrateAndCompensate(uint32_t timeoutMs);
   /**
    * @brief Initial configuration for all the registers
    *
