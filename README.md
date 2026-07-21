@@ -198,6 +198,18 @@ search for it once:
 
 From then on the meter is read **once a day at 12:00 local time** by default.
 
+> **Do not read the meter more often than once a day.** The meter is battery
+> powered, sealed, and rated for roughly ten years at one read per day; there is
+> no way to change its battery, so a flat battery means a replacement from the
+> utility. It also wakes for *any* transmission on its band, not only its own, so
+> a failed sweep of dozens of frequencies costs it dozens of wake-ups — which is
+> why this firmware never escalates an automatic read to a full sweep, and why
+> the sweep is a deliberate button rather than a fallback. Finally, the meter
+> keeps a **read counter** that the utility expects to match its own scheduled
+> reads: reading it yourself makes that number diverge, which their equipment can
+> treat as tampering. The `Read Now` and `Test Frequency` buttons are diagnostic
+> aids, not something to sit on.
+
 ## Home Assistant
 
 Entities appear automatically under one *Everblu Cyble* device:

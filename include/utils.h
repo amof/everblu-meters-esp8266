@@ -70,6 +70,17 @@ uint8_t decode_4bitpbit_serial(const uint8_t *rxBuffer, int l_total_byte, uint8_
 uint8_t radian_frame_length(const uint8_t *frame, uint8_t decodedSize);
 
 /**
+ * @brief Does a frame's trailing Kermit checksum match its contents?
+ *
+ * The only test that proves a frame is the one the meter sent, rather than one
+ * the decoder happened to produce of the right length. @p declaredLen is the
+ * frame's own L (byte 0), which is what the checksum covers — pass the result
+ * of radian_frame_length, never the raw decoded length, or trailing noise gets
+ * folded into the sum. Same swapped-byte convention as crc_kermit.
+ */
+bool radian_checksum_ok(const uint8_t *frame, uint8_t declaredLen);
+
+/**
  * @brief Standard base64, NUL-terminated.
  *
  * Written here rather than using the ESP8266 core's base64.h because this file

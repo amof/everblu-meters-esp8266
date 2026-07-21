@@ -1,7 +1,8 @@
-// Tier 3 of ADR-0003: pin frame construction to the vectors published on the
-// Maison Simon wiki (docs/cyble/radian-protocol.md). These are ground truth
-// independent of both this codebase and the pre-rewrite one, captured off the
-// air from real meters.
+// Tier 3 of ADR-0003: pin frame construction and validation. The vectors here
+// are the ones published on the Maison Simon wiki (docs/cyble/radian-protocol.md)
+// plus synthetic frames built with arbitrary values — no real meter data. The
+// RX-timing tests that needed a live capture live outside the repository with
+// the capture itself; ADR-0003 explains why.
 
 #include <unity.h>
 #include <string.h>
@@ -241,6 +242,88 @@ void test_frame_length_falls_back_when_L_is_not_a_length(void)
     TEST_ASSERT_EQUAL_UINT8(0, radian_frame_length(garbage, 0));
 }
 
+// The checksum gate that decides whether a response becomes a reading. The wiki
+// ack is a complete frame (L=18) whose checksum is public, so it stands in for
+// any whole frame.
+void test_checksum_accepts_a_whole_frame(void)
+{
+    uint8_t frame[18] = {0x12, 0x06, 0x00, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0x00,
+                         0x45, 0x10, 0x01, 0xE2, 0x40, 0x00, 0x0A, 0x90, 0x9E};
+
+    TEST_ASSERT_TRUE(radian_checksum_ok(frame, 18));
+}
+
+// A single flipped byte anywhere before the checksum must fail it — this is the
+// whole point of gating on it rather than on length.
+void test_checksum_rejects_a_corrupted_frame(void)
+{
+    uint8_t frame[18] = {0x12, 0x06, 0x00, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0x00,
+                         0x45, 0x10, 0x01, 0xE2, 0x40, 0x00, 0x0A, 0x90, 0x9E};
+    frame[7] ^= 0x01; // corrupt one address byte
+
+    TEST_ASSERT_FALSE(radian_checksum_ok(frame, 18));
+}
+
+// Nonsense lengths are refused rather than read out of bounds.
+void test_checksum_refuses_an_implausible_length(void)
+{
+    uint8_t frame[4] = {0x12, 0x06, 0x00, 0x45};
+
+    TEST_ASSERT_FALSE(radian_checksum_ok(NULL, 18));
+    TEST_ASSERT_FALSE(radian_checksum_ok(frame, 2));
+}
+
+// A full-length response, stood up from nothing: arbitrary field values, a
+// genuine Kermit checksum, and the real 124-byte layout. It stands in for the
+// live capture the RX regression once used, exercising the accept path at the
+// real frame size — the length cap, the checksum over 122 bytes, the rejection
+// of a single flipped byte — without shipping any real meter's data.
+static void buildSyntheticResponse(uint8_t frame[124])
+{
+    memset(frame, 0, 124);
+    frame[0] = 0x7C; // L = 124
+    frame[1] = 0x11; // control byte: response
+
+    // Current index, little endian: 0x0000C350 = 50000 L. Arbitrary.
+    frame[18] = 0x50;
+    frame[19] = 0xC3;
+
+    // Thirteen monthly indexes, oldest first, rising as a cumulative index must.
+    for (uint8_t m = 0; m < 13; m++)
+    {
+        uint32_t value = 4000u * (m + 1); // 4000, 8000, ... 52000
+        uint8_t at = 70 + m * 4;
+        frame[at + 0] = (uint8_t)(value);
+        frame[at + 1] = (uint8_t)(value >> 8);
+        frame[at + 2] = (uint8_t)(value >> 16);
+        frame[at + 3] = (uint8_t)(value >> 24);
+    }
+
+    // Real checksum over the 122 bytes before it, high byte first — the same
+    // convention createRadianMasterRequest and the reader both use.
+    uint16_t crc = crc_kermit(frame, 122);
+    frame[122] = (uint8_t)(crc >> 8);
+    frame[123] = (uint8_t)(crc & 0xFF);
+}
+
+void test_full_response_passes_length_and_checksum(void)
+{
+    uint8_t frame[124];
+    buildSyntheticResponse(frame);
+
+    TEST_ASSERT_EQUAL_UINT8(124, radian_frame_length(frame, 124));
+    TEST_ASSERT_TRUE(radian_checksum_ok(frame, radian_frame_length(frame, 124)));
+}
+
+void test_full_response_rejected_when_a_payload_byte_flips(void)
+{
+    uint8_t frame[124];
+    buildSyntheticResponse(frame);
+    frame[70] ^= 0xFF; // corrupt the oldest history entry
+
+    TEST_ASSERT_FALSE(radian_checksum_ok(frame, 124));
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -260,5 +343,10 @@ int main(int, char **)
     RUN_TEST(test_frame_length_is_bounded_by_the_declared_length);
     RUN_TEST(test_frame_length_never_exceeds_what_was_decoded);
     RUN_TEST(test_frame_length_falls_back_when_L_is_not_a_length);
+    RUN_TEST(test_checksum_accepts_a_whole_frame);
+    RUN_TEST(test_checksum_rejects_a_corrupted_frame);
+    RUN_TEST(test_checksum_refuses_an_implausible_length);
+    RUN_TEST(test_full_response_passes_length_and_checksum);
+    RUN_TEST(test_full_response_rejected_when_a_payload_byte_flips);
     return UNITY_END();
 }

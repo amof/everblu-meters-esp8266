@@ -638,17 +638,28 @@ ExchangeOutcome EverbluCyble::tryFrequency(float freqMhz)
 
 bool EverbluCyble::decodeBufferReceived(const uint8_t *decoded_buffer, uint8_t size)
 {
-    // Everything below is bounded by the frame, not by the decode. Once the
-    // capture has slack the decoder overruns the frame into whatever follows it,
-    // so the decoded length is an upper bound on what arrived and byte 0 is the
-    // upper bound on what is meaningful. Take the smaller of the two: reading a
-    // field past L would be reading noise that happens to sit in the buffer.
+    // A reading is a whole frame that proves itself. Byte 0 is L, the frame's
+    // own length; the final two bytes are the Kermit checksum over everything
+    // before them. radian_frame_length caps the decode at L, since a roomy
+    // capture decodes on past the frame into the noise behind it.
+    //
+    // The test used to be merely "long enough to reach the fields", which would
+    // accept a frame the meter never sent whole, or a misdecode that happened to
+    // land on the right length. The checksum is the only thing that will not,
+    // and a live 124-byte response has now been confirmed to pass it — so it is
+    // safe to make it the gate rather than only report it.
+    uint8_t declared = decoded_buffer[0];
     uint8_t frameLen = radian_frame_length(decoded_buffer, size);
-
-    // Indices are offsets, so the frame must be strictly longer than the last
-    // one read. INDEX_NUM_OF_READINGS is 48, hence 49 bytes minimum.
-    if (frameLen <= INDEX_NUM_OF_READINGS)
+    if (declared <= INDEX_NUM_OF_READINGS || frameLen < declared)
+    {
+        LOG("[Everblu] Response incomplete: L=%u decoded=%u\n", declared, size);
         return false;
+    }
+    if (!radian_checksum_ok(decoded_buffer, frameLen))
+    {
+        LOG("[Everblu] Response failed its checksum, discarding\n");
+        return false;
+    }
 
     currentIndex = readIndexAt(decoded_buffer, INDEX_CURRENT_INDEX);
     numReadings = decoded_buffer[INDEX_NUM_OF_READINGS];
@@ -666,26 +677,19 @@ bool EverbluCyble::decodeBufferReceived(const uint8_t *decoded_buffer, uint8_t s
 
     decodeMeterSerial(decoded_buffer, frameLen);
 
-    // Decoded only as far as the frame reaches, rather than refused outright:
-    // the history is the last thing in the response, so a frame long enough for
-    // an index but short of the history is exactly what a truncated capture
-    // produces. Reporting the index and saying how much history is missing beats
-    // discarding a good reading.
+    // The checksum has already guaranteed the frame is whole, so all thirteen
+    // months are present; the bound is kept only so a meter that one day reports
+    // a shorter history cannot walk this past its own frame. The last entry ends
+    // at 121, two bytes short of the checksum at 122, so it is never read into.
     monthlyCount = 0;
     for (uint8_t m = 0; m < MONTHLY_HISTORY_COUNT; m++)
     {
         uint16_t at = INDEX_MONTHLY_HISTORY + (uint16_t)m * 4;
-        // The last history entry ends at 121, two bytes short of L=124 where
-        // the checksum sits, so this never reads into the checksum either.
         if (at + 4 > frameLen)
             break;
         monthlyIndex[m] = readIndexAt(decoded_buffer, (uint8_t)at);
         monthlyCount++;
     }
-
-    if (monthlyCount < MONTHLY_HISTORY_COUNT)
-        LOG("[Everblu] Frame carried %u of %u monthly indexes\n",
-            monthlyCount, MONTHLY_HISTORY_COUNT);
 
     return true;
 }
@@ -745,8 +749,8 @@ ExchangeOutcome EverbluCyble::getDataFromMeter()
     LOG("[Everblu] Wait for meter response\n");
     bool complete = wait_meter_response();
 
-    // The exchange is over — this reader never sends a master ack — so nothing
-    // below is racing the meter.
+    // The exchange is over — this reader never sends a master ack — so decoding
+    // the ack now cannot race the meter.
     bool ackIsOurs = false;
     if (ackCapture != NULL)
     {
@@ -939,7 +943,14 @@ bool EverbluCyble::wait_meter_response()
     }
     else
     {
-        LOG("[Everblu] Frame too short to decode: %u bytes\n", meterDataSize);
+        // A response arrived but would not validate — truncated, or failed its
+        // checksum. On a deployed reader there is no cable to look at, so publish
+        // the raw capture: scripts/decode_capture.py turns it back into the bytes
+        // the meter sent, which is the only way to tell a decoder fault from a
+        // marginal signal after the fact. Bounded to the failure path, so a
+        // healthy reader never emits it.
+        LOG("[Everblu] Response did not validate, publishing raw capture\n");
+        logCapture("resp_failed", rxBuffer, bytesReceived);
     }
 
     free(rxBuffer);

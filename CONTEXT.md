@@ -44,8 +44,20 @@ _Avoid_: CRC (ambiguous — the master request has one too), checksum bytes
 **Master ack**:
 The short frame the reader is meant to send back to close the exchange, after
 the meter response. Part of the protocol as documented, but never sent by this
-reader, nor by the implementation it descends from; the meter completes the
-exchange without it.
+reader nor by any independent implementation, and the meter has been observed
+directly to send nothing further and wait for nothing: after a complete response
+it went silent for a listening window rather than retransmitting. So the meter
+completes the exchange without it, and its absence is not why a meter later falls
+silent — reading too often is.
+
+**Readings count**:
+How many times the meter reports having been read. Not a private diagnostic: it
+is the same counter the utility's own equipment expects to match its scheduled
+reads, so every read this device completes widens the gap and can look, from the
+utility's side, like tampering. A reason reads are not free, alongside the
+battery.
+_Avoid_: number of readings (verbose), read count (ambiguous with the daily
+attempt budget)
 
 **Reading**:
 One completed exchange yielding a current index from a meter response that

@@ -96,18 +96,23 @@ opaque, but it decodes to the meter's radio address, its serial and thirteen
 months of consumption history: enough for anyone in range to interrogate that
 meter over the air, and enough to infer when the household was empty. In a
 public repository that is a disclosure, not a fixture. Captures are therefore
-gitignored under `test/fixtures/`, and the tests that read one live only in the
-working tree of whoever took it.
+gitignored under `test/fixtures/`, and no committed test reads one — a capture is
+kept, if at all, as a purely local diagnostic artefact of whoever took it.
 
-The cost is real and worth stating: the RX-side regression tests do not run in
-a clone, so the timing measurement that sized `RADIAN_FRAME_SIZE` — 11.4 bit
-periods per byte, against the 11 originally assumed — is recorded here in prose
-rather than asserted in CI. Anyone reproducing it needs their own meter and
-their own capture, which `scripts/decode_capture.py` turns into the same fixture
-shape. Synthesising a substitute was considered and rejected: a capture
-re-encoded through our own encoder would confirm this codebase's assumptions
-about the wire rather than test them, which is the specific failure this ADR
-exists to avoid.
+The committed suite instead covers the two things that can be tested without the
+wire: field construction and validation, on *decoded* frames built from arbitrary
+values with genuine Kermit checksums (`test_full_response_*`), and the decoder
+itself as a characterisation round-trip over a synthetic stream. What it cannot
+cover is the wire *timing*: the measurement that sized `RADIAN_FRAME_SIZE` — 11.4
+bit periods per byte, against the 11 originally assumed — is recorded here in
+prose rather than asserted in CI, because reproducing it needs a real oversampled
+capture, which `scripts/decode_capture.py` turns back into bytes from the MQTT
+topic. Synthesising a substitute *capture* was considered and rejected: raw bits
+re-encoded through our own encoder would confirm this codebase's assumptions about
+the wire rather than test them, which is the specific failure this ADR exists to
+avoid. Synthetic *decoded* frames carry no such circularity — they exercise the
+checksum and the offsets, not the sampling — which is why those are committed and
+a synthetic capture is not.
 
 One on-hardware read against a live meter therefore remains the final gate, and
 no amount of green on the desktop substitutes for it.

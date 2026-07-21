@@ -92,5 +92,3 @@ cc1101.pdf
 # ADR-0003 on what that costs the test suite.
 test/fixtures/
 logs/
-log.txt
-log_mqtt.txt

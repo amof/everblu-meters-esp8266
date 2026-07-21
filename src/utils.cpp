@@ -220,6 +220,18 @@ uint8_t radian_frame_length(const uint8_t *frame, uint8_t decodedSize)
     return declared < decodedSize ? declared : decodedSize;
 }
 
+bool radian_checksum_ok(const uint8_t *frame, uint8_t declaredLen)
+{
+    // Below 3 there is no room for a length byte and a two-byte checksum, so
+    // there is nothing to verify against.
+    if (frame == NULL || declaredLen < 3)
+        return false;
+
+    uint16_t expected = crc_kermit(frame, declaredLen - 2);
+    uint16_t actual = ((uint16_t)frame[declaredLen - 2] << 8) | frame[declaredLen - 1];
+    return expected == actual;
+}
+
 size_t base64_encode(const uint8_t *in, size_t inLen, char *out, size_t outSize)
 {
     static const char alphabet[] =
