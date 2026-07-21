@@ -186,6 +186,23 @@ void publishWiring()
 }
 
 /**
+ * @brief Format a litre count as cubic metres with three decimals.
+ *
+ * The meter counts whole litres, and a cubic metre is a thousand of them, so
+ * the three decimals are exactly the litres — the conversion loses nothing and
+ * never rounds. Done with integer arithmetic rather than a float divide so a
+ * large index cannot drift in the seventh significant digit. This is the form
+ * the physical dial and the utility bill both read in.
+ */
+String cubicMetres(uint32_t litres)
+{
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%lu.%03lu",
+           (unsigned long)(litres / 1000), (unsigned long)(litres % 1000));
+  return String(buf);
+}
+
+/**
  * @brief Publish last month's index, and the rest of the history as attributes.
  *
  * Nothing is published when the response carried no history: a truncated frame
@@ -203,16 +220,19 @@ void publishMeterHistory()
   // The last entry is M-1, whatever the count: the series is stored oldest
   // first, so a truncated frame loses the recent months, not the old ones.
   mqtt.publish(previousIndexStateTopic,
-               String(cyble.monthlyIndex[cyble.monthlyCount - 1]), true);
+               cubicMetres(cyble.monthlyIndex[cyble.monthlyCount - 1]), true);
 
-  // 13 indexes at up to 10 digits, plus the clock and serial, fits well inside
-  // the raised MQTT packet size.
+  // 13 indexes as m³ (up to "4294967.295"), plus the clock and serial, fits
+  // well inside the raised MQTT packet size. Kept in the same unit as the
+  // sensor above so the attribute series and the state agree.
   char json[512];
   int used = snprintf(json, sizeof(json), "{\"history_oldest_first\": [");
   for (uint8_t m = 0; m < cyble.monthlyCount && used > 0 && used < (int)sizeof(json); m++)
   {
-    used += snprintf(json + used, sizeof(json) - used, "%s%u",
-                     m == 0 ? "" : ", ", cyble.monthlyIndex[m]);
+    used += snprintf(json + used, sizeof(json) - used, "%s%lu.%03lu",
+                     m == 0 ? "" : ", ",
+                     (unsigned long)(cyble.monthlyIndex[m] / 1000),
+                     (unsigned long)(cyble.monthlyIndex[m] % 1000));
   }
   if (used > 0 && used < (int)sizeof(json))
     used += snprintf(json + used, sizeof(json) - used,
@@ -240,7 +260,7 @@ void publishResult(MeterReadResult result)
   {
   case METER_READ_OK:
     digitalWrite(LED_BUILTIN, LOW); // turned on
-    mqtt.publish(indexStateTopic, String(cyble.currentIndex), true);
+    mqtt.publish(indexStateTopic, cubicMetres(cyble.currentIndex), true);
     mqtt.publish(batteryStateTopic, String(cyble.batteryLifetime), true);
     mqtt.publish(readingsStateTopic, String(cyble.numReadings), true);
     publishMeterHistory();

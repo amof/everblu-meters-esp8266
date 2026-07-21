@@ -121,7 +121,10 @@ constexpr const char *buttonTestFrequencyConfigTopic = "homeassistant/button/eve
     "\"sw_version\": \"" FIRMWARE_VERSION "\""    \
     "}"
 
-// JSON payload for water meter index sensor
+// JSON payload for water meter index sensor. Published in cubic metres to three
+// decimals — the form the physical dial and the utility bill read in. The three
+// decimals are the litres exactly, so nothing is lost; the precision is pinned
+// so the water device class does not add or drop digits.
 constexpr const char *indexConfigPayload =
     "{"
     "\"name\": \"Everblu Cyble Current Index\","
@@ -129,7 +132,8 @@ constexpr const char *indexConfigPayload =
     "\"device_class\": \"water\","
     "\"state_class\": \"total_increasing\","
     "\"unique_id\": \"everblu_cyble_index\","
-    "\"unit_of_measurement\": \"L\","
+    "\"unit_of_measurement\": \"m\xC2\xB3\","
+    "\"suggested_display_precision\": 3,"
     "\"icon\": \"mdi:water\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // JSON payload for water meter battery sensor
@@ -252,7 +256,8 @@ constexpr const char *previousIndexConfigPayload =
     "\"json_attributes_topic\": \"everblu/cyble/meter/attributes\","
     "\"device_class\": \"water\","
     "\"state_class\": \"total_increasing\","
-    "\"unit_of_measurement\": \"L\","
+    "\"unit_of_measurement\": \"m\xC2\xB3\","
+    "\"suggested_display_precision\": 3,"
     "\"icon\": \"mdi:calendar-arrow-left\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // Aim a single attempt by hand. Bounds and step match the sweep's own band and

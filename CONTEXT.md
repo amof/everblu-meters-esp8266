@@ -93,7 +93,11 @@ the low end of the range does not truncate the frame, it truncates the
 ### The meter
 
 **Current index**:
-The meter's cumulative water consumption in litres.
+The meter's cumulative water consumption in litres. Litres is the raw counter
+and the unit everything internal — decoding, logging, storage — works in;
+Home Assistant is shown cubic metres, which is what the dial and the bill read,
+converted only at the point of publishing and losing nothing since a thousand
+litres is exactly a cubic metre.
 _Avoid_: liters, consumption, total
 
 **Battery lifetime**:

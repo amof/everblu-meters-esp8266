@@ -229,7 +229,9 @@ Entities appear automatically under one *Everblu Cyble* device:
 | CC1101 Wiring | `everblu/cyble/wiring` | `ok`, `spi_failed`, `gdo0_failed` |
 
 Readings are published retained on `everblu/cyble/index`, `.../battery` and
-`.../readings`.
+`.../readings`. The index is published in **cubic metres to three decimals** —
+the form the meter dial and the water bill read in — with the current and
+previous-month indexes carrying it as their value.
 
 Status is one of:
 
