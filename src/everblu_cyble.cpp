@@ -80,8 +80,16 @@ const static uint16_t FREQ_STEPS_RECENTER = 3;
 #define EEPROM_SCHEDULE_ADDR 24 // Address where the reading schedule is stored
 
 #define SCHEDULE_MAGIC 0x45564332UL // "EVC2"
-#define SCHEDULE_SCHEMA 1
+// Bumped to 2 when intervalDays was added: a schema-1 record has a different
+// layout, so load() rejects it and the defaults below take over — which is the
+// wanted migration, not a fault.
+#define SCHEDULE_SCHEMA 2
 #define DEFAULT_READING_HOUR 12 // Midday: comfortably inside the wakeup window
+#define DEFAULT_READING_INTERVAL_DAYS 1 // Daily, preserving the prior behaviour
+// A sane upper bound on the interval. The meter keeps 13 months of history, so
+// there is no reason to space readings by more than a few weeks, and it also
+// caps how far isReadingDue()'s day arithmetic can be pushed.
+#define MAX_READING_INTERVAL_DAYS 30
 
 // Failed automatic reads allowed per day before giving up until tomorrow. Each
 // one can cost a full frequency sweep, so this bounds a non-answering meter's
@@ -163,7 +171,8 @@ bool EverbluCyble::init()
     _store.begin(EEPROM_SIZE);
 
     loadSchedule();
-    LOG("[Everblu] Automatic reading at %02u:%02u local\n", _schedule.hour, _schedule.minute);
+    LOG("[Everblu] Automatic reading at %02u:%02u local, every %u day(s)\n",
+        _schedule.hour, _schedule.minute, _schedule.intervalDays);
 
     _provisioned = loadProfile();
     if (_provisioned)
@@ -208,13 +217,16 @@ void EverbluCyble::saveProfile(float frequency)
 
 void EverbluCyble::loadSchedule()
 {
-    // Erased flash, an older layout, or hours that are not hours: fall back to
-    // the documented default rather than reading garbage out of 0xFF bytes.
+    // Erased flash, an older layout, hours that are not hours, or an interval
+    // outside its bounds: fall back to the documented defaults rather than
+    // reading garbage out of 0xFF bytes.
     if (!_store.load(EEPROM_SCHEDULE_ADDR, _schedule, SCHEDULE_MAGIC, SCHEDULE_SCHEMA) ||
-        _schedule.hour > 23 || _schedule.minute > 59)
+        _schedule.hour > 23 || _schedule.minute > 59 ||
+        _schedule.intervalDays < 1 || _schedule.intervalDays > MAX_READING_INTERVAL_DAYS)
     {
         _schedule.hour = DEFAULT_READING_HOUR;
         _schedule.minute = 0;
+        _schedule.intervalDays = DEFAULT_READING_INTERVAL_DAYS;
         _schedule.lastReadAt = 0;
         // Left unsaved: the default takes effect in RAM now, and the tag is
         // stamped onto flash by the first saveSchedule() a read or a setting
@@ -242,6 +254,20 @@ bool EverbluCyble::setScheduledTime(uint8_t hour, uint8_t minute)
     return true;
 }
 
+bool EverbluCyble::setReadingIntervalDays(uint8_t days)
+{
+    if (days < 1 || days > MAX_READING_INTERVAL_DAYS)
+    {
+        LOG("[Everblu] Ignoring invalid reading interval %u\n", days);
+        return false;
+    }
+
+    _schedule.intervalDays = days;
+    saveSchedule();
+    LOG("[Everblu] Automatic reading every %u day(s)\n", days);
+    return true;
+}
+
 /** Whether two instants fall on the same local calendar day. */
 static bool sameLocalDay(time_t a, time_t b)
 {
@@ -251,12 +277,40 @@ static bool sameLocalDay(time_t a, time_t b)
     return (aTm.tm_year == bTm.tm_year) && (aTm.tm_yday == bTm.tm_yday);
 }
 
-bool EverbluCyble::alreadyReadToday(time_t now) const
+/**
+ * Whole local calendar days from @p earlier to @p later.
+ *
+ * Both instants are dropped to their local midnight before subtracting, so the
+ * result counts date boundaries crossed rather than 24-hour spans — a reading
+ * at 23:00 and one at 01:00 the next night are one day apart, not two. mktime()
+ * re-applies the local zone, and the half-day bias absorbs a DST step so a day
+ * shortened or lengthened by an hour still counts as one.
+ */
+static long localDaysBetween(time_t earlier, time_t later)
 {
+    struct tm e = *localtime(&earlier);
+    struct tm l = *localtime(&later);
+    e.tm_hour = e.tm_min = e.tm_sec = 0;
+    e.tm_isdst = -1;
+    l.tm_hour = l.tm_min = l.tm_sec = 0;
+    l.tm_isdst = -1;
+
+    return (long)((mktime(&l) - mktime(&e) + 43200) / 86400);
+}
+
+bool EverbluCyble::isReadingDue(time_t now) const
+{
+    // Never read: due immediately, whatever the interval.
     if (_schedule.lastReadAt == 0)
+        return true;
+
+    // At most one reading per calendar day, so a shorter-than-a-day interval or
+    // a same-day retry never reads twice.
+    if (sameLocalDay(_schedule.lastReadAt, now))
         return false;
 
-    return sameLocalDay(_schedule.lastReadAt, now);
+    // Otherwise due once the configured number of local days has elapsed.
+    return localDaysBetween(_schedule.lastReadAt, now) >= _schedule.intervalDays;
 }
 
 uint8_t EverbluCyble::maxAttemptsPerDay() const
@@ -277,7 +331,7 @@ MeterReadResult EverbluCyble::readIfDue(time_t now, bool *performed)
 {
     *performed = false;
 
-    if (alreadyReadToday(now))
+    if (!isReadingDue(now))
         return METER_READ_OK;
 
     struct tm nowTm = *localtime(&now);

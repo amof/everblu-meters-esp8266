@@ -163,6 +163,106 @@ static EverbluCyble *bringUpProvisioned(float frequency)
     return reader;
 }
 
+// Must match SCHEDULE_MAGIC / SCHEDULE_SCHEMA in everblu_cyble.cpp. Duplicated
+// as a canary: if the on-flash layout changes without this following, the
+// seeded record stops loading and the interval tests fail loudly.
+#define SCHEDULE_MAGIC 0x45564332UL // "EVC2"
+#define SCHEDULE_SCHEMA 2
+
+/**
+ * Bring up a reader whose last successful read and interval are already set,
+ * as they would be after a reboot. The record is seeded straight into flash so
+ * init() sees exactly what a power cycle sees.
+ */
+static EverbluCyble *bringUpAfterRead(time_t lastReadAt, uint8_t intervalDays)
+{
+    ReaderSchedule stored;
+    memset(&stored, 0, sizeof(stored));
+    stored.magic = SCHEDULE_MAGIC;
+    stored.schema = SCHEDULE_SCHEMA;
+    stored.hour = SCHEDULE_HOUR;
+    stored.minute = SCHEDULE_MINUTE;
+    stored.intervalDays = intervalDays;
+    stored.lastReadAt = lastReadAt;
+
+    EEPROM.seed(24, stored); // EEPROM_SCHEDULE_ADDR
+
+    static EverbluCyble *reader = NULL;
+    delete reader;
+    reader = new EverbluCyble(TEST_GDO0_PIN, TEST_METER_YEAR, TEST_METER_SERIAL);
+    reader->init();
+    return reader;
+}
+
+void test_daily_is_the_default_interval(void)
+{
+    // Erased flash must come up reading daily, the behaviour before the interval
+    // was configurable.
+    EverbluCyble *reader = bringUp();
+    TEST_ASSERT_EQUAL_UINT8(1, reader->readingIntervalDays());
+}
+
+void test_the_interval_is_validated(void)
+{
+    EverbluCyble *reader = bringUp();
+    TEST_ASSERT_FALSE(reader->setReadingIntervalDays(0));
+    TEST_ASSERT_FALSE(reader->setReadingIntervalDays(31)); // above MAX
+    TEST_ASSERT_TRUE(reader->setReadingIntervalDays(7));
+    TEST_ASSERT_EQUAL_UINT8(7, reader->readingIntervalDays());
+}
+
+void test_the_interval_survives_a_reboot(void)
+{
+    EverbluCyble *reader = bringUp();
+    reader->setReadingIntervalDays(7);
+
+    // A second reader over the same flash is what the next boot sees.
+    EverbluCyble rebooted(TEST_GDO0_PIN, TEST_METER_YEAR, TEST_METER_SERIAL);
+    rebooted.init();
+    TEST_ASSERT_EQUAL_UINT8(7, rebooted.readingIntervalDays());
+}
+
+void test_the_same_day_is_never_read_twice(void)
+{
+    // A read this morning; an afternoon tick must not read again, whatever the
+    // interval — the old once-a-day guarantee, kept.
+    EverbluCyble *reader = bringUpAfterRead(localTime(MONDAY, 8, 0), 1);
+
+    bool performed = true;
+    reader->readIfDue(localTime(MONDAY, 15, 0), &performed);
+    TEST_ASSERT_FALSE(performed);
+}
+
+void test_a_daily_reader_is_due_the_next_readable_day(void)
+{
+    // Read Saturday; Sunday is deaf, so Monday is the next attempt.
+    EverbluCyble *reader = bringUpAfterRead(localTime(SATURDAY, SCHEDULE_HOUR, 0), 1);
+
+    bool performed = false;
+    reader->readIfDue(localTime(MONDAY, SCHEDULE_HOUR, 0), &performed);
+    TEST_ASSERT_TRUE(performed);
+}
+
+void test_a_weekly_reader_skips_the_days_between(void)
+{
+    // Read Monday 2026-07-20; two days later is not yet due.
+    EverbluCyble *reader = bringUpAfterRead(localTime(MONDAY, SCHEDULE_HOUR, 0), 7);
+
+    bool performed = true;
+    reader->readIfDue(localTime(2026, 7, 22, SCHEDULE_HOUR, 0), &performed);
+    TEST_ASSERT_FALSE(performed);
+}
+
+void test_a_weekly_reader_reads_once_the_interval_elapses(void)
+{
+    // Seven days after the Monday read, the reading is due again.
+    EverbluCyble *reader = bringUpAfterRead(localTime(MONDAY, SCHEDULE_HOUR, 0), 7);
+
+    bool performed = false;
+    reader->readIfDue(localTime(2026, 7, 27, SCHEDULE_HOUR, 0), &performed);
+    TEST_ASSERT_TRUE(performed);
+}
+
 /**
  * A failed automatic read must not escalate to a full sweep.
  *
@@ -365,6 +465,13 @@ int main(int argc, char **argv)
     RUN_TEST(test_saturday_is_a_working_day);
     RUN_TEST(test_window_edges);
     RUN_TEST(test_nothing_is_attempted_before_the_scheduled_time);
+    RUN_TEST(test_daily_is_the_default_interval);
+    RUN_TEST(test_the_interval_is_validated);
+    RUN_TEST(test_the_interval_survives_a_reboot);
+    RUN_TEST(test_the_same_day_is_never_read_twice);
+    RUN_TEST(test_a_daily_reader_is_due_the_next_readable_day);
+    RUN_TEST(test_a_weekly_reader_skips_the_days_between);
+    RUN_TEST(test_a_weekly_reader_reads_once_the_interval_elapses);
     RUN_TEST(test_a_due_reading_is_attempted);
     RUN_TEST(test_a_failed_automatic_read_does_not_escalate_to_a_full_sweep);
     RUN_TEST(test_a_requested_sweep_still_searches_the_whole_band);

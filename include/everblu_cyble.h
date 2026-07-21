@@ -55,9 +55,10 @@ struct ReaderSchedule
 {
     uint32_t magic;
     uint16_t schema;
-    uint8_t hour;       // Local hour of the daily reading
-    uint8_t minute;     // Local minute of the daily reading
-    time_t lastReadAt;  // When the last successful read completed
+    uint8_t hour;         // Local hour of the reading
+    uint8_t minute;       // Local minute of the reading
+    uint8_t intervalDays; // Local days between readings: 1 = daily, 7 = weekly
+    time_t lastReadAt;    // When the last successful read completed
 };
 
 class EverbluCyble
@@ -145,6 +146,16 @@ public:
     uint8_t scheduledMinute() const { return _schedule.minute; }
     /** Set and persist the automatic interrogation time. Ignores out-of-range. */
     bool setScheduledTime(uint8_t hour, uint8_t minute);
+    /** Local days between automatic readings: 1 = daily, 7 = weekly. */
+    uint8_t readingIntervalDays() const { return _schedule.intervalDays; }
+    /**
+     * @brief Set and persist the reading interval in local days.
+     *
+     * Reading every day is the heaviest a meter's battery and its readings
+     * count will bear; a larger interval trades freshness for both. Ignores a
+     * zero or an implausibly large value.
+     */
+    bool setReadingIntervalDays(uint8_t days);
     /** Whether a valid meter profile is stored. */
     bool isProvisioned() const { return _provisioned; }
 
@@ -250,8 +261,15 @@ private:
      * worked, saved only on a complete reading.
      */
     MeterReadResult completeRead(ExchangeOutcome outcome, float foundMhz, time_t now);
-    /** Whether a successful read has already happened on the given local day. */
-    bool alreadyReadToday(time_t now) const;
+    /**
+     * @brief Whether an automatic reading is due at the given time.
+     *
+     * Due when the meter has never been read, or when the configured number of
+     * local days has elapsed since the last successful read and today has not
+     * already been read. Time of day, the wakeup window and the attempt budget
+     * are checked separately by readIfDue().
+     */
+    bool isReadingDue(time_t now) const;
     /**
      * @brief Roll the attempt budget over if the local day has changed.
      *

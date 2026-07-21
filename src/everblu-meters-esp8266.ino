@@ -89,6 +89,44 @@ void publishScheduledTime()
   mqtt.publish(scheduleTimeStateTopic, formatted, true);
 }
 
+// The named cadences the reader offers, and the day interval each maps to. The
+// reader itself only knows days; these labels are the Home Assistant select's
+// vocabulary and must match its "options" list exactly. "Twice a week" is every
+// third day — roughly two readings a week once Sundays, when the meter is deaf,
+// are taken out.
+struct IntervalOption
+{
+  const char *label;
+  uint8_t days;
+};
+static const IntervalOption intervalOptions[] = {
+    {"Daily", 1},
+    {"Every 2 days", 2},
+    {"Twice a week", 3},
+    {"Weekly", 7},
+};
+
+/**
+ * @brief Publish the reading interval as the label matching the stored days.
+ *
+ * Falls back to the first option if the stored value names no preset, which
+ * only a hand-edited record could produce — a select cannot show a value
+ * outside its own list.
+ */
+void publishReadingInterval()
+{
+  const char *label = intervalOptions[0].label;
+  for (const IntervalOption &option : intervalOptions)
+  {
+    if (option.days == cyble.readingIntervalDays())
+    {
+      label = option.label;
+      break;
+    }
+  }
+  mqtt.publish(readingIntervalStateTopic, label, true);
+}
+
 /**
  * @brief Publish when the meter last answered, as ISO 8601.
  *
@@ -377,6 +415,7 @@ void onConnectionEstablished()
       {statusConfigTopic, statusConfigPayload},
       {lastReadConfigTopic, lastReadConfigPayload},
       {scheduleTimeConfigTopic, scheduleTimeConfigPayload},
+      {readingIntervalConfigTopic, readingIntervalConfigPayload},
       {buttonReadConfigTopic, buttonReadConfigPayload},
       {buttonSweepConfigTopic, buttonSweepConfigPayload},
       {wiringConfigTopic, wiringConfigPayload},
@@ -390,9 +429,10 @@ void onConnectionEstablished()
     delay(50);
   }
 
-  // Reflect the stored schedule so the Home Assistant entity shows the value
+  // Reflect the stored schedule so the Home Assistant entities show the values
   // actually in force rather than an empty state.
   publishScheduledTime();
+  publishReadingInterval();
   // The verdict from boot. Published on every reconnect rather than once, so a
   // broker restart does not leave the entity blank until the next power cycle.
   publishWiring();
@@ -432,6 +472,19 @@ void onConnectionEstablished()
     }
     if (cyble.setScheduledTime(hour, minute))
       publishScheduledTime();
+  });
+
+  mqtt.subscribe(readingIntervalSetTopic, [](const String &message) {
+    for (const IntervalOption &option : intervalOptions)
+    {
+      if (message == option.label)
+      {
+        if (cyble.setReadingIntervalDays(option.days))
+          publishReadingInterval();
+        return;
+      }
+    }
+    LOG("Ignoring unknown reading interval '%s'\n", message.c_str());
   });
 
   mqtt.subscribe(commandReadTopic, [](const String &message) { readNow(); });

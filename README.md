@@ -196,7 +196,10 @@ search for it once:
 3. The sweep takes minutes of continuous transmission. The frequency it finds is
    saved to EEPROM and reused from then on.
 
-From then on the meter is read **once a day at 12:00 local time** by default.
+From then on the meter is read **once a day at 12:00 local time** by default. The
+**Reading Interval** entity spaces that out — daily, every 2 days, twice a week
+or weekly — for anyone who would rather trade freshness for battery life and a
+slower-growing read counter (see the warning below).
 
 > **Do not read the meter more often than once a day.** The meter is battery
 > powered, sealed, and rated for roughly ten years at one read per day; there is
@@ -216,7 +219,8 @@ Entities appear automatically under one *Everblu Cyble* device:
 
 | Entity | Topic | Purpose |
 | --- | --- | --- |
-| Reading Time | `everblu/cyble/schedule/time/set` | Daily reading time as `HH:MM`. Persisted. |
+| Reading Time | `everblu/cyble/schedule/time/set` | Time of day to read, as `HH:MM`. Persisted. |
+| Reading Interval | `everblu/cyble/schedule/interval/set` | How often to read: Daily, Every 2 days, Twice a week, Weekly. Persisted. |
 | Read Now | `everblu/cyble/command/read` | Read immediately on the known frequency. |
 | Full Sweep | `everblu/cyble/command/sweep` | Forget the frequency and search again. |
 | Check Wiring | `everblu/cyble/command/wiring` | Re-run the wiring check without a reboot. |
@@ -283,8 +287,8 @@ marks the boundary.
 
 ### Recent history
 
-Reads happen once a day and failures are easy to miss, so the last few lines are
-also published, joined together and **retained**, on:
+Reads happen at most once a day and failures are easy to miss, so the last few
+lines are also published, joined together and **retained**, on:
 
     everblu/cyble/log/recent
 

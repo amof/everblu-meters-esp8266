@@ -167,8 +167,18 @@ hand. Distinct from a sweep, which is the search for a working frequency that an
 interrogation may have to fall back on.
 
 **Reading hour**:
-The local hour at which the reader interrogates the meter automatically, once a
-day. User configuration, not something learned from the meter.
+The local time of day at which the reader interrogates the meter automatically.
+User configuration, not something learned from the meter.
+
+**Reading interval**:
+How many local days apart the automatic readings are: daily by default, or
+sparser to spare the battery and the readings count. User configuration,
+counted from the last reading that succeeded rather than from a fixed weekday,
+so a missed day slides the next reading later rather than skipping it. Offered
+to the user as a named cadence — daily, twice a week, weekly — but stored and
+reasoned about as a plain number of days. Deliberately never called a
+_frequency_: that word is the radio's here.
+_Avoid_: reading frequency (collides with working frequency), schedule
 
 ### The reader itself
 

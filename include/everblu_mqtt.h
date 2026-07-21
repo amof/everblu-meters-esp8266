@@ -39,6 +39,13 @@ constexpr const char *statusStateTopic = "everblu/cyble/status";
 // actually answered, which is what "is the reader still working" depends on.
 constexpr const char *lastReadStateTopic = "everblu/cyble/last_read";
 constexpr const char *scheduleTimeStateTopic = "everblu/cyble/schedule/time";
+// How often the reader interrogates the meter, as a named cadence rather than a
+// raw day count so Home Assistant shows "Twice a week", not "3". Deliberately
+// not called a "frequency": that word is the radio's here, and reusing it would
+// put two unrelated meanings on one dashboard. The reader stores days; the
+// sketch maps them to and from these labels.
+constexpr const char *readingIntervalStateTopic = "everblu/cyble/schedule/interval";
+constexpr const char *readingIntervalSetTopic = "everblu/cyble/schedule/interval/set";
 // The frequency a single-attempt test will use, in MHz. Settable, and separate
 // from the working frequency in the meter profile: this one is aimed by hand.
 constexpr const char *testFrequencyStateTopic = "everblu/cyble/test_frequency";
@@ -89,6 +96,7 @@ constexpr const char *readingsConfigTopic = "homeassistant/sensor/everblucyble01
 constexpr const char *statusConfigTopic = "homeassistant/sensor/everblucyble01a/status/config";
 constexpr const char *lastReadConfigTopic = "homeassistant/sensor/everblucyble01a/last_read/config";
 constexpr const char *scheduleTimeConfigTopic = "homeassistant/text/everblucyble01a/reading_time/config";
+constexpr const char *readingIntervalConfigTopic = "homeassistant/select/everblucyble01a/reading_interval/config";
 constexpr const char *buttonReadConfigTopic = "homeassistant/button/everblucyble01a/read/config";
 constexpr const char *buttonSweepConfigTopic = "homeassistant/button/everblucyble01a/sweep/config";
 constexpr const char *wiringConfigTopic = "homeassistant/sensor/everblucyble01a/wiring/config";
@@ -178,6 +186,21 @@ constexpr const char *scheduleTimeConfigPayload =
     "\"min\": 5, \"max\": 5,"
     "\"entity_category\": \"config\","
     "\"icon\": \"mdi:clock-outline\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
+
+// How often to read, as a cadence the user picks. The options must match the
+// labels the sketch maps to day counts (see intervalOptions); Home Assistant
+// rejects a state that is not one of them. Reading daily is the heaviest a
+// battery meter and its readings count will bear, so a sparser cadence is
+// offered right beside the reading time.
+constexpr const char *readingIntervalConfigPayload =
+    "{"
+    "\"name\": \"Everblu Cyble Reading Interval\","
+    "\"unique_id\": \"everblu_cyble_reading_interval\","
+    "\"command_topic\": \"everblu/cyble/schedule/interval/set\","
+    "\"state_topic\": \"everblu/cyble/schedule/interval\","
+    "\"options\": [\"Daily\", \"Every 2 days\", \"Twice a week\", \"Weekly\"],"
+    "\"entity_category\": \"config\","
+    "\"icon\": \"mdi:calendar-clock\"," EVERBLU_AVAILABILITY_JSON EVERBLU_DEVICE_JSON "}";
 
 // Read now, using the frequency already known
 constexpr const char *buttonReadConfigPayload =
