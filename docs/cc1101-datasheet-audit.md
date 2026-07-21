@@ -90,8 +90,9 @@ not 10.1 (10.1 is the Chip Status Byte); Table 42 is per-strobe (SFTX in IDLE or
 TXFIFO_UNDERFLOW, SFRX in IDLE or RXFIFO_OVERFLOW), not one combined list.
 
 Also worth knowing: **FIFO_BYTES_AVAILABLE saturates at 15** ("15 or more"), so
-`status_FIFO_FreeByte` can never report more than 15 free bytes. Anything
-needing a real count must read TXBYTES/RXBYTES, as `waitTxFifoFree()` does.
+the free-byte nibble of the chip status byte can never report more than 15.
+Anything needing a real count must read TXBYTES/RXBYTES, as `waitTxFifoFree()`
+does — which is why that nibble is not kept anywhere.
 
 ## Test harness
 
